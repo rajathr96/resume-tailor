@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, Copy, Check, AlertCircle, Loader2, Briefcase, Target, Wand2, TrendingUp, AlertTriangle, CheckCircle2, XCircle, Lightbulb } from 'lucide-react';
+import { Sparkles, Copy, Check, AlertCircle, Loader2, Briefcase, Target, Wand2, TrendingUp, AlertTriangle, CheckCircle2, XCircle, Lightbulb, Zap, RotateCcw, ArrowRight } from 'lucide-react';
 
 export default function ResumeBuilderPOC() {
   const [masterResume, setMasterResume] = useState('');
@@ -7,8 +7,12 @@ export default function ResumeBuilderPOC() {
   const [archetype, setArchetype] = useState('Fintech PM');
   const [seniority, setSeniority] = useState('APM / Associate PM');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
   const [stage, setStage] = useState('');
   const [result, setResult] = useState(null);
+  const [originalResult, setOriginalResult] = useState(null); // for reset
+  const [previousScore, setPreviousScore] = useState(null); // for delta display
+  const [selectedWins, setSelectedWins] = useState(new Set());
   const [error, setError] = useState(null);
   const [copiedIdx, setCopiedIdx] = useState(null);
   const [activeTab, setActiveTab] = useState('bullets');
@@ -32,26 +36,17 @@ export default function ResumeBuilderPOC() {
     return text.replace(/```json\s*|\s*```/g, '').trim();
   };
 
-  const generateResume = async () => {
-    if (!masterResume.trim() || !jobDescription.trim()) {
-      setError('Please provide both your master resume and the job description.');
-      return;
-    }
-    setIsGenerating(true);
-    setError(null);
-    setResult(null);
-
-    try {
-      setStage('Tailoring bullets for the role...');
-      const tailorSystem = `You are an expert PM resume tailoring engine for ${archetype} roles at ${seniority} level.
+  const tailorBullets = async (masterResumeInput, jobDescInput, additionalGuidance = '') => {
+    const systemPrompt = `You are an expert PM resume tailoring engine for ${archetype} roles at ${seniority} level.
 
 CORE RULES (NON-NEGOTIABLE):
 1. INFER, DON'T INVENT: You may reframe, re-emphasize, and surface implicit work from the master resume. You MUST NOT invent specific facts, numbers, company names, tools, frameworks, or claims not present in the source.
 2. XYZ FORMAT (not STAR): Each bullet should follow "[Strong action verb] + [what you did with context/scope] + [quantified impact]". Bullets should be ~15-22 words, single line, punchy.
 3. PRESERVE TRUTH: Never fabricate metrics. If the master resume says "improved CTR by 25%", keep 25%. Never round up, embellish, or invent numbers.
-4. ARCHETYPE LENS: Tailor for ${archetype}. Surface bullets and angles most relevant to this archetype. Reframe technical work through this lens where defensible.
-5. SENIORITY CALIBRATION: For ${seniority}, emphasize the appropriate signals (APM: execution, learning, structured thinking | PM: ownership, cross-functional delivery | Senior: influence, strategy | Group/Lead: org-level impact, mentoring).
+4. ARCHETYPE LENS: Tailor for ${archetype}. Surface bullets and angles most relevant to this archetype.
+5. SENIORITY CALIBRATION: For ${seniority}, emphasize the appropriate signals.
 6. KEYWORD INTEGRATION: Weave JD keywords into bullets naturally, never stuff.
+${additionalGuidance ? `\nADDITIONAL GUIDANCE FOR THIS GENERATION:\n${additionalGuidance}` : ''}
 
 OUTPUT FORMAT (return ONLY this JSON, no markdown):
 {
@@ -62,30 +57,23 @@ OUTPUT FORMAT (return ONLY this JSON, no markdown):
   "gaps": ["gap 1", "gap 2"]
 }`;
 
-      const tailorUser = `MASTER RESUME:\n${masterResume}\n\n---\n\nJOB DESCRIPTION:\n${jobDescription}\n\n---\n\nGenerate the tailored resume. Return ONLY the JSON.`;
-      const tailoredText = await callClaude(tailorSystem, tailorUser, 4000);
-      const tailored = JSON.parse(tailoredText);
+    const userPrompt = `MASTER RESUME:\n${masterResumeInput}\n\n---\n\nJOB DESCRIPTION:\n${jobDescInput}\n\n---\n\nGenerate the tailored resume. Return ONLY the JSON.`;
+    const text = await callClaude(systemPrompt, userPrompt, 4000);
+    return JSON.parse(text);
+  };
 
-      setStage('Running ATS keyword analysis...');
-      const tailoredResumeText = tailored.tailored_experiences.map(e =>
-        `${e.company} | ${e.role} | ${e.dates}\n${e.bullets.map(b => '• ' + b).join('\n')}`
-      ).join('\n\n');
+  const scoreResume = async (tailored, jobDescInput) => {
+    const tailoredResumeText = tailored.tailored_experiences.map(e =>
+      `${e.company} | ${e.role} | ${e.dates}\n${e.bullets.map(b => '• ' + b).join('\n')}`
+    ).join('\n\n');
 
-      const atsSystem = `You are an ATS (Applicant Tracking System) and recruiter analysis engine. You analyze how well a tailored resume matches a job description, with the rigor of a real recruiter — not a naive keyword counter.
+    const systemPrompt = `You are an ATS analysis engine analyzing how well a tailored resume matches a job description, with the rigor of a real recruiter — not a naive keyword counter.
 
 ANALYSIS METHODOLOGY:
-1. Extract keywords/requirements from the JD and categorize each as:
-   - "hard_skill" (e.g., SQL, Python, A/B testing)
-   - "domain" (e.g., fintech, wealth management, payments)
-   - "soft_signal" (e.g., ownership, ambiguity, cross-functional)
-   - "tool" (e.g., Jira, Figma, GCP)
-   - "experience" (e.g., 2-3 years PM, MBA, fintech background)
-2. Weight each as "must_have" (explicitly required, repeated, or central to the role) or "nice_to_have"
-3. For each keyword, check if it's satisfied in the tailored resume — using SEMANTIC matching, not literal. "A/B testing" matches "experimentation". "Led" matches "owned". Be generous but accurate.
-4. For satisfied keywords, identify WHICH bullet/section covers it
-5. For unsatisfied keywords, classify as:
-   - "addressable" — could be added truthfully via rephrasing existing content
-   - "real_gap" — genuinely missing experience that requires new content
+1. Extract keywords/requirements from the JD and categorize each as: hard_skill, domain, soft_signal, tool, experience
+2. Weight each as "must_have" or "nice_to_have"
+3. Semantic matching — "A/B testing" matches "experimentation". "Led" matches "owned". Be generous but accurate.
+4. For unsatisfied keywords, classify as "addressable" (could be added truthfully) or "real_gap" (genuinely missing)
 
 SCORING:
 - Match score = (weighted satisfied / weighted total) × 100
@@ -116,12 +104,34 @@ OUTPUT (return ONLY this JSON, no markdown):
   ]
 }`;
 
-      const atsUser = `JOB DESCRIPTION:\n${jobDescription}\n\n---\n\nTAILORED RESUME:\n${tailoredResumeText}\n\n---\n\nAnalyze the match. Return ONLY the JSON.`;
-      const atsText = await callClaude(atsSystem, atsUser, 4000);
-      const ats = JSON.parse(atsText);
+    const userPrompt = `JOB DESCRIPTION:\n${jobDescInput}\n\n---\n\nTAILORED RESUME:\n${tailoredResumeText}\n\n---\n\nAnalyze the match. Return ONLY the JSON.`;
+    const text = await callClaude(systemPrompt, userPrompt, 4000);
+    return JSON.parse(text);
+  };
+
+  const generateResume = async () => {
+    if (!masterResume.trim() || !jobDescription.trim()) {
+      setError('Please provide both your master resume and the job description.');
+      return;
+    }
+    setIsGenerating(true);
+    setError(null);
+    setResult(null);
+    setOriginalResult(null);
+    setPreviousScore(null);
+    setSelectedWins(new Set());
+
+    try {
+      setStage('Tailoring bullets...');
+      const tailored = await tailorBullets(masterResume, jobDescription);
+
+      setStage('Running ATS analysis...');
+      const ats = await scoreResume(tailored, jobDescription);
 
       setStage('');
-      setResult({ ...tailored, ats });
+      const finalResult = { ...tailored, ats };
+      setResult(finalResult);
+      setOriginalResult(finalResult);
       setActiveTab('bullets');
     } catch (err) {
       setError(`Generation failed: ${err.message}. Try again or simplify your input.`);
@@ -130,6 +140,60 @@ OUTPUT (return ONLY this JSON, no markdown):
       setIsGenerating(false);
     }
   };
+
+  const applyQuickWins = async () => {
+    if (!result || selectedWins.size === 0) return;
+    setIsApplying(true);
+    setError(null);
+    setPreviousScore(result.ats.match_score);
+
+    try {
+      // Build guidance from selected quick wins
+      const winsToApply = Array.from(selectedWins).map(idx => result.ats.missing_addressable[idx]);
+      const guidanceText = winsToApply.map((w, i) =>
+        `${i + 1}. Incorporate "${w.keyword}" (${w.category}, ${w.weight}): ${w.fix_suggestion}`
+      ).join('\n');
+
+      const additionalGuidance = `The previous tailored version was missing these JD keywords/requirements. Incorporate them into the bullets WITHOUT inventing new facts — use the suggestions below, which describe how to reframe existing master-resume content. Keep all original metrics and facts intact:\n\n${guidanceText}\n\nRewrite the affected bullets to naturally include these signals while preserving truthfulness.`;
+
+      setStage('Applying quick wins...');
+      const tailored = await tailorBullets(masterResume, jobDescription, additionalGuidance);
+
+      setStage('Re-scoring...');
+      const ats = await scoreResume(tailored, jobDescription);
+
+      setStage('');
+      setResult({ ...tailored, ats });
+      setSelectedWins(new Set());
+      setActiveTab('bullets');
+    } catch (err) {
+      setError(`Failed to apply: ${err.message}`);
+      setStage('');
+    } finally {
+      setIsApplying(false);
+    }
+  };
+
+  const resetToOriginal = () => {
+    if (!originalResult) return;
+    setResult(originalResult);
+    setPreviousScore(null);
+    setSelectedWins(new Set());
+  };
+
+  const toggleWin = (idx) => {
+    const next = new Set(selectedWins);
+    if (next.has(idx)) next.delete(idx);
+    else next.add(idx);
+    setSelectedWins(next);
+  };
+
+  const selectAllWins = () => {
+    if (!result?.ats?.missing_addressable) return;
+    setSelectedWins(new Set(result.ats.missing_addressable.map((_, i) => i)));
+  };
+
+  const clearAllWins = () => setSelectedWins(new Set());
 
   const copyBullet = (text, idx) => {
     navigator.clipboard.writeText(text);
@@ -204,6 +268,8 @@ You'll be a great fit if you:
     experience: 'Experience'
   };
 
+  const busy = isGenerating || isApplying;
+
   return (
     <div className="min-h-screen bg-stone-50" style={{ fontFamily: '"Inter", system-ui, sans-serif' }}>
       <style>{`
@@ -220,7 +286,7 @@ You'll be a great fit if you:
             </div>
             <div>
               <h1 className="display-font text-xl font-semibold text-stone-900 leading-tight">Resume Tailor</h1>
-              <p className="text-xs text-stone-500">POC v2 · with ATS scoring</p>
+              <p className="text-xs text-stone-500">POC v3 · with Apply Quick Wins</p>
             </div>
           </div>
           <button onClick={loadSample} className="text-sm text-stone-600 hover:text-stone-900 transition-colors underline underline-offset-4">
@@ -232,11 +298,10 @@ You'll be a great fit if you:
       <main className="max-w-6xl mx-auto px-6 py-10">
         <div className="mb-10 max-w-3xl">
           <h2 className="display-font text-4xl font-semibold text-stone-900 leading-tight mb-3">
-            Tailor your resume.<br />
-            <span className="text-stone-400">Know your ATS match score.</span>
+            Tailor. Score. <span className="text-stone-400">Apply.</span>
           </h2>
           <p className="text-stone-600 leading-relaxed">
-            Rewrites bullets in XYZ format for your target archetype, then scores how well the result matches the JD — with actionable, category-level gap analysis.
+            Generate tailored bullets, see your ATS match score, then close the loop with one click — pick the Quick Wins you want and regenerate.
           </p>
         </div>
 
@@ -265,7 +330,7 @@ You'll be a great fit if you:
             <textarea
               value={jobDescription}
               onChange={(e) => setJobDescription(e.target.value)}
-              placeholder="Paste the full JD — responsibilities, requirements, qualifications."
+              placeholder="Paste the full JD."
               className="w-full h-72 p-5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none resize-none"
               style={{ fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace', fontSize: '13px', lineHeight: '1.6' }}
             />
@@ -302,7 +367,7 @@ You'll be a great fit if you:
         <div className="mb-8">
           <button
             onClick={generateResume}
-            disabled={isGenerating || !masterResume.trim() || !jobDescription.trim()}
+            disabled={busy || !masterResume.trim() || !jobDescription.trim()}
             className="w-full md:w-auto px-8 py-4 bg-stone-900 text-stone-50 rounded-xl font-medium text-sm hover:bg-stone-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-sm"
           >
             {isGenerating ? (
@@ -313,13 +378,10 @@ You'll be a great fit if you:
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                Tailor & Score My Resume
+                {result ? 'Regenerate from scratch' : 'Tailor & Score My Resume'}
               </>
             )}
           </button>
-          {isGenerating && (
-            <p className="mt-2 text-xs text-stone-500">Two-pass generation: tailoring bullets, then scoring against ATS. Takes ~25s.</p>
-          )}
         </div>
 
         {error && (
@@ -331,10 +393,12 @@ You'll be a great fit if you:
 
         {result && (
           <div className="space-y-6">
+            {/* ATS Score Card */}
             {result.ats && (() => {
               const colors = scoreColor(result.ats.match_score);
               const circumference = 2 * Math.PI * 56;
               const offset = circumference - (result.ats.match_score / 100) * circumference;
+              const delta = previousScore !== null ? result.ats.match_score - previousScore : null;
               return (
                 <div className={`${colors.bg} ${colors.border} border rounded-xl p-6`}>
                   <div className="flex items-start gap-6 flex-wrap">
@@ -355,9 +419,14 @@ You'll be a great fit if you:
                       </div>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2">
+                      <div className="flex items-center gap-3 mb-2 flex-wrap">
                         <TrendingUp className={`w-5 h-5 ${colors.text}`} />
                         <h3 className={`display-font text-2xl font-semibold ${colors.text}`}>{result.ats.score_label}</h3>
+                        {delta !== null && (
+                          <span className={`px-2 py-1 rounded-md text-xs font-semibold flex items-center gap-1 ${delta > 0 ? 'bg-emerald-100 text-emerald-800' : delta < 0 ? 'bg-red-100 text-red-800' : 'bg-stone-100 text-stone-700'}`}>
+                            {delta > 0 ? '+' : ''}{delta} from {previousScore}
+                          </span>
+                        )}
                       </div>
                       <p className={`text-sm ${colors.text} leading-relaxed mb-4`}>{result.ats.summary}</p>
                       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
@@ -370,6 +439,19 @@ You'll be a great fit if you:
                       </div>
                     </div>
                   </div>
+                  {/* Reset if there's a prior state */}
+                  {previousScore !== null && result !== originalResult && (
+                    <div className="mt-4 pt-4 border-t border-stone-200/50">
+                      <button
+                        onClick={resetToOriginal}
+                        disabled={busy}
+                        className="text-xs text-stone-600 hover:text-stone-900 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        Reset to original tailored version
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })()}
@@ -379,19 +461,20 @@ You'll be a great fit if you:
                 {[
                   { id: 'bullets', label: 'Tailored Bullets' },
                   { id: 'satisfied', label: 'What Matched', count: result.ats?.satisfied_keywords?.length },
-                  { id: 'addressable', label: 'Quick Wins', count: result.ats?.missing_addressable?.length },
+                  { id: 'addressable', label: 'Quick Wins', count: result.ats?.missing_addressable?.length, highlight: result.ats?.missing_addressable?.length > 0 },
                   { id: 'gaps', label: 'Real Gaps', count: result.ats?.missing_real_gaps?.length },
                 ].map(t => (
                   <button key={t.id} onClick={() => setActiveTab(t.id)}
                     className={`px-5 py-3 text-sm font-medium transition-all border-b-2 whitespace-nowrap ${activeTab === t.id ? 'border-stone-900 text-stone-900' : 'border-transparent text-stone-500 hover:text-stone-900'}`}>
                     {t.label}
                     {t.count !== undefined && (
-                      <span className="ml-1.5 inline-flex items-center justify-center w-5 h-5 text-xs bg-stone-100 text-stone-700 rounded-full">{t.count}</span>
+                      <span className={`ml-1.5 inline-flex items-center justify-center w-5 h-5 text-xs rounded-full ${t.highlight && activeTab !== t.id ? 'bg-amber-100 text-amber-800' : 'bg-stone-100 text-stone-700'}`}>{t.count}</span>
                     )}
                   </button>
                 ))}
               </div>
 
+              {/* Tailored Bullets tab */}
               {activeTab === 'bullets' && (
                 <div>
                   {result.tailoring_notes && (
@@ -436,6 +519,7 @@ You'll be a great fit if you:
                 </div>
               )}
 
+              {/* What Matched tab */}
               {activeTab === 'satisfied' && (
                 <div className="p-6">
                   <p className="text-xs text-stone-500 mb-4">JD requirements your tailored resume already covers, with evidence.</p>
@@ -457,31 +541,101 @@ You'll be a great fit if you:
                 </div>
               )}
 
+              {/* Quick Wins tab - the new interactive one */}
               {activeTab === 'addressable' && (
-                <div className="p-6">
-                  <p className="text-xs text-stone-500 mb-4">Missing keywords that you CAN add truthfully by rephrasing existing content. Highest-leverage fixes.</p>
-                  {result.ats?.missing_addressable?.length === 0 ? (
-                    <div className="text-center py-8 text-sm text-stone-500">No quick wins — every addressable keyword is already covered.</div>
-                  ) : (
-                    <div className="space-y-3">
-                      {result.ats?.missing_addressable?.map((k, i) => (
-                        <div key={i} className="p-4 bg-amber-50 border border-amber-100 rounded-lg">
-                          <div className="flex items-center gap-2 flex-wrap mb-2">
-                            <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                            <span className="font-medium text-sm text-stone-900">{k.keyword}</span>
-                            <span className="text-xs px-1.5 py-0.5 bg-white text-stone-600 rounded">{categoryLabels[k.category] || k.category}</span>
-                            {k.weight === 'must_have' && <span className="text-xs px-1.5 py-0.5 bg-stone-900 text-white rounded">must-have</span>}
+                <div>
+                  {/* Sticky action bar */}
+                  {result.ats?.missing_addressable?.length > 0 && (
+                    <div className="sticky top-0 bg-white border-b border-stone-200 px-6 py-4 z-10">
+                      <div className="flex items-center justify-between gap-4 flex-wrap">
+                        <div className="flex items-center gap-4 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <Zap className="w-4 h-4 text-amber-600" />
+                            <span className="text-sm font-medium text-stone-900">
+                              {selectedWins.size} of {result.ats.missing_addressable.length} selected
+                            </span>
                           </div>
-                          <div className="ml-6 text-sm text-stone-700 leading-relaxed">
-                            <span className="font-medium text-stone-900">Fix: </span>{k.fix_suggestion}
+                          <div className="flex items-center gap-2 text-xs">
+                            <button onClick={selectAllWins} className="text-stone-600 hover:text-stone-900 underline underline-offset-2">
+                              Select all
+                            </button>
+                            <span className="text-stone-300">·</span>
+                            <button onClick={clearAllWins} className="text-stone-600 hover:text-stone-900 underline underline-offset-2">
+                              Clear
+                            </button>
                           </div>
                         </div>
-                      ))}
+                        <button
+                          onClick={applyQuickWins}
+                          disabled={selectedWins.size === 0 || busy}
+                          className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm"
+                        >
+                          {isApplying ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              {stage || 'Applying...'}
+                            </>
+                          ) : (
+                            <>
+                              <Zap className="w-4 h-4" />
+                              Apply {selectedWins.size > 0 ? `${selectedWins.size} ` : ''}Quick Win{selectedWins.size !== 1 ? 's' : ''}
+                              <ArrowRight className="w-4 h-4" />
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   )}
+
+                  <div className="p-6">
+                    <p className="text-xs text-stone-500 mb-4">
+                      Missing keywords that you CAN add truthfully by rephrasing existing content. <strong className="text-stone-700">Select the ones you want to incorporate</strong> — Claude will regenerate the bullets and recompute the score.
+                    </p>
+                    {result.ats?.missing_addressable?.length === 0 ? (
+                      <div className="text-center py-12">
+                        <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-3" />
+                        <p className="text-sm font-medium text-stone-900 mb-1">All addressable keywords covered</p>
+                        <p className="text-xs text-stone-500">No quick wins left to apply.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {result.ats?.missing_addressable?.map((k, i) => {
+                          const isSelected = selectedWins.has(i);
+                          return (
+                            <label
+                              key={i}
+                              className={`block p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                                isSelected ? 'bg-amber-50 border-amber-400' : 'bg-white border-stone-200 hover:border-stone-300'
+                              }`}
+                            >
+                              <div className="flex items-start gap-3">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleWin(i)}
+                                  className="mt-1 w-4 h-4 rounded border-stone-300 text-amber-600 focus:ring-amber-500 focus:ring-offset-0 cursor-pointer"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap mb-2">
+                                    <span className="font-medium text-sm text-stone-900">{k.keyword}</span>
+                                    <span className="text-xs px-1.5 py-0.5 bg-stone-100 text-stone-600 rounded">{categoryLabels[k.category] || k.category}</span>
+                                    {k.weight === 'must_have' && <span className="text-xs px-1.5 py-0.5 bg-stone-900 text-white rounded">must-have</span>}
+                                  </div>
+                                  <div className="text-sm text-stone-700 leading-relaxed">
+                                    <span className="font-medium text-stone-900">Suggested fix: </span>{k.fix_suggestion}
+                                  </div>
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
+              {/* Real Gaps tab */}
               {activeTab === 'gaps' && (
                 <div className="p-6">
                   <p className="text-xs text-stone-500 mb-4">Things the JD asks for that you genuinely don't have. Address in cover letter or interview — don't fake it on the resume.</p>
@@ -509,7 +663,7 @@ You'll be a great fit if you:
         )}
 
         <div className="mt-12 pt-6 border-t border-stone-200 text-xs text-stone-500 leading-relaxed">
-          <strong className="text-stone-700">POC v2:</strong> Two-pass pipeline — bullet tailoring + ATS scoring. The score weights must-haves 2× and uses semantic matching, not literal keyword stuffing. Quick Wins are the highest-leverage tab — fix those first.
+          <strong className="text-stone-700">POC v3 — what's new:</strong> Quick Wins are now actionable. Select the ones you want, click "Apply", and Claude regenerates the bullets with those keywords incorporated (truthfully — no inventing). The score recomputes and shows the delta. Reset anytime to return to the original tailored version.
         </div>
       </main>
     </div>
