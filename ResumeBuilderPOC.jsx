@@ -1,3 +1,4 @@
+'use client';
 import React, { useState } from 'react';
 import { Sparkles, Copy, Check, AlertCircle, Loader2, Briefcase, Target, Wand2, TrendingUp, AlertTriangle, CheckCircle2, XCircle, Lightbulb, Zap, RotateCcw, ArrowRight } from 'lucide-react';
 
@@ -21,19 +22,19 @@ export default function ResumeBuilderPOC() {
   const seniorities = ['APM / Associate PM', 'PM (IC)', 'Senior PM', 'Group PM / Lead PM'];
 
   const callClaude = async (systemPrompt, userPrompt, maxTokens = 4000) => {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: maxTokens,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }]
-      })
+    const response = await fetch('/api/claude', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ systemPrompt, userPrompt, maxTokens }),
     });
     const data = await response.json();
-    const text = data.content.map(c => c.text || '').join('').trim();
-    return text.replace(/```json\s*|\s*```/g, '').trim();
+    if (data.error) throw new Error(data.error);
+    // Extract the JSON object/array even if the model adds preamble or markdown
+    const raw = data.text;
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start === -1 || end === -1) throw new Error('No JSON object found in model response');
+    return raw.slice(start, end + 1);
   };
 
   const tailorBullets = async (masterResumeInput, jobDescInput, additionalGuidance = '') => {
@@ -212,7 +213,7 @@ OUTPUT (return ONLY this JSON, no markdown):
   };
 
   const loadSample = () => {
-    setMasterResume(`RAJATH R | IIM Bangalore MBA 2023-25 | BTech IT Manipal 2015-19
+    setMasterResume(`Benjamin Franking | IMI B MBA 2023-25 | BTech IT Manipal
 
 AMERICAN EXPRESS (May 25 - Present) - Senior Analyst, Product & Analytics
 • Owned 2+ high-impact features and user journeys to improve retention and loyalty of high-CMV customers, driving ~15% uplift in retention.
