@@ -1,8 +1,17 @@
 'use client';
 import React, { useState } from 'react';
-import { Sparkles, Copy, Check, AlertCircle, Loader2, Briefcase, Target, Wand2, TrendingUp, AlertTriangle, CheckCircle2, XCircle, Lightbulb, Zap, RotateCcw, ArrowRight } from 'lucide-react';
+import { Sparkles, Copy, Check, AlertCircle, Loader2, Briefcase, Target, Wand2, TrendingUp, CheckCircle2, XCircle, Lightbulb, Zap, RotateCcw, ArrowRight, FileText, ChevronLeft } from 'lucide-react';
 
 export default function ResumeBuilderPOC() {
+  const [mode, setMode] = useState('select'); // 'select' | 'master' | 'tailor'
+
+  // Master builder state
+  const [rawNotes, setRawNotes] = useState('');
+  const [isBuildingMaster, setIsBuildingMaster] = useState(false);
+  const [masterResult, setMasterResult] = useState(null);
+  const [masterError, setMasterError] = useState(null);
+
+  // Tailor state
   const [masterResume, setMasterResume] = useState('');
   const [jobDescription, setJobDescription] = useState('');
   const [archetype, setArchetype] = useState('Fintech PM');
@@ -11,8 +20,8 @@ export default function ResumeBuilderPOC() {
   const [isApplying, setIsApplying] = useState(false);
   const [stage, setStage] = useState('');
   const [result, setResult] = useState(null);
-  const [originalResult, setOriginalResult] = useState(null); // for reset
-  const [previousScore, setPreviousScore] = useState(null); // for delta display
+  const [originalResult, setOriginalResult] = useState(null);
+  const [previousScore, setPreviousScore] = useState(null);
   const [selectedWins, setSelectedWins] = useState(new Set());
   const [error, setError] = useState(null);
   const [copiedIdx, setCopiedIdx] = useState(null);
@@ -290,6 +299,65 @@ You'll be a great fit if you:
 • Have 2-3 years of experience in analytics, consulting, or product management.`);
   };
 
+  const buildMasterResume = async () => {
+    if (!rawNotes.trim()) return;
+    setIsBuildingMaster(true);
+    setMasterError(null);
+    setMasterResult(null);
+    try {
+      const systemPrompt = `You are a senior career coach and resume strategist with 20+ years of experience helping professionals land roles at top-tier companies. You specialise in listening to someone's career story — the way they'd tell it to a friend — and translating it into sharp, credible resume bullets that capture the real impact behind the narrative.
+
+YOUR JOB:
+The user will narrate their work experiences in plain, conversational language — stories, not structured notes. Your job is to put on two hats simultaneously:
+
+HAT 1 — CAREER COACH: Listen holistically. Identify what the person actually accomplished, what skills they demonstrated, what problems they solved, what decisions they owned, and what impact they drove — even if they didn't frame it that way themselves. Surface the signal hidden in the story.
+
+HAT 2 — RESUME STRATEGIST: Convert those insights into tight, credible resume bullets that a hiring manager would find compelling and an ATS would rank highly.
+
+EXTRACTION RULES — read the story, then ask yourself:
+- What did this person OWN vs just contribute to?
+- What CHANGED because of their work? (metric, speed, revenue, quality, scale)
+- What was the SCOPE? (team size, user base, revenue, number of systems/products)
+- What DECISIONS did they make under ambiguity?
+- What CROSS-FUNCTIONAL work happened that shows influence beyond their role?
+- What SKILLS are implied but not stated? (e.g. "got all teams aligned" implies stakeholder management)
+
+BULLET WRITING RULES:
+1. XYZ FORMAT: "[Strong action verb] + [what you did with scope/context] + [quantified impact]". ~15-22 words, single line.
+2. STRONG OPENING VERBS: Owned, Led, Built, Drove, Launched, Designed, Incubated, Scaled, Reduced, Negotiated, Spearheaded, Synthesised, Streamlined.
+3. QUANTIFY EVERYTHING POSSIBLE: Use numbers from the story exactly. If no number is given but scope is inferable (e.g. "our whole team" → infer team size if mentioned), surface it. Never fabricate specific numbers.
+4. INFER, DON'T INVENT: You may reframe, elevate language, and surface implicit impact. You must NOT add facts, metrics, tools, or claims not grounded in the story.
+5. ONE BULLET PER DISTINCT ACHIEVEMENT: Don't bundle unrelated wins into one bullet. Split them.
+6. INCLUDE EVERYTHING: This is a master resume — capture all roles and all meaningful stories. Nothing gets left out.
+
+OUTPUT (return ONLY this JSON, no markdown):
+{
+  "master_experiences": [
+    {"company": "...", "role": "...", "dates": "...", "bullets": ["...", "..."]}
+  ]
+}`;
+      const userPrompt = `RAW EXPERIENCE NOTES:\n${rawNotes}\n\nBuild the master resume. Return ONLY the JSON.`;
+      const text = await callClaude(systemPrompt, userPrompt, 4000);
+      const parsed = JSON.parse(text);
+      setMasterResult(parsed);
+    } catch (err) {
+      setMasterError(`Build failed: ${err.message}. Try again.`);
+    } finally {
+      setIsBuildingMaster(false);
+    }
+  };
+
+  const masterResultToPlainText = (experiences) =>
+    experiences.map(e =>
+      `${e.company} | ${e.role} | ${e.dates}\n${e.bullets.map(b => `• ${b}`).join('\n')}`
+    ).join('\n\n');
+
+  const useForTailoring = () => {
+    if (!masterResult) return;
+    setMasterResume(masterResultToPlainText(masterResult.master_experiences));
+    setMode('tailor');
+  };
+
   const scoreColor = (score) => {
     if (score >= 75) return { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-900', ring: 'stroke-emerald-500' };
     if (score >= 55) return { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-900', ring: 'stroke-amber-500' };
@@ -317,21 +385,166 @@ You'll be a great fit if you:
       <header className="border-b border-stone-200 bg-white">
         <div className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between">
           <div className="flex items-center gap-3">
+            {mode !== 'select' && (
+              <button onClick={() => setMode('select')} className="mr-1 p-1.5 rounded-lg hover:bg-stone-100 transition-colors">
+                <ChevronLeft className="w-5 h-5 text-stone-600" />
+              </button>
+            )}
             <div className="w-9 h-9 rounded-lg bg-stone-900 flex items-center justify-center">
               <Wand2 className="w-5 h-5 text-stone-50" />
             </div>
             <div>
               <h1 className="display-font text-xl font-semibold text-stone-900 leading-tight">Resume Tailor</h1>
-              <p className="text-xs text-stone-500">POC v3 · with Apply Quick Wins</p>
+              <p className="text-xs text-stone-500">
+                {mode === 'select' ? 'What would you like to do?' : mode === 'master' ? 'Build Master Resume' : 'Tailor for a Role'}
+              </p>
             </div>
           </div>
-          <button onClick={loadSample} className="text-sm text-stone-600 hover:text-stone-900 transition-colors underline underline-offset-4">
-            Load sample data
-          </button>
+          {mode === 'tailor' && (
+            <button onClick={loadSample} className="text-sm text-stone-600 hover:text-stone-900 transition-colors underline underline-offset-4">
+              Load sample data
+            </button>
+          )}
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-10">
+
+        {/* ── MODE SELECTION ── */}
+        {mode === 'select' && (
+          <div>
+            <div className="mb-10 max-w-2xl">
+              <h2 className="display-font text-4xl font-semibold text-stone-900 leading-tight mb-3">
+                Where do you want to start?
+              </h2>
+              <p className="text-stone-600 leading-relaxed">
+                Build a polished master resume from scratch, or jump straight to tailoring an existing one for a specific role.
+              </p>
+            </div>
+            <div className="grid md:grid-cols-2 gap-5 max-w-3xl">
+              <button
+                onClick={() => setMode('master')}
+                className="group text-left bg-white border-2 border-stone-200 hover:border-stone-900 rounded-2xl p-7 transition-all duration-200 hover:shadow-md"
+              >
+                <div className="w-12 h-12 rounded-xl bg-stone-100 group-hover:bg-stone-900 flex items-center justify-center mb-5 transition-colors">
+                  <FileText className="w-6 h-6 text-stone-600 group-hover:text-stone-50 transition-colors" />
+                </div>
+                <h3 className="display-font text-xl font-semibold text-stone-900 mb-2">Build Master Resume</h3>
+                <p className="text-sm text-stone-500 leading-relaxed">
+                  Narrate your work stories the way you'd tell them to a friend. A career coach extracts the strongest resume bullets from your narrative.
+                </p>
+                <div className="mt-5 flex items-center gap-1.5 text-xs font-medium text-stone-400 group-hover:text-stone-900 transition-colors">
+                  Tell your story <ArrowRight className="w-3.5 h-3.5" />
+                </div>
+              </button>
+
+              <button
+                onClick={() => setMode('tailor')}
+                className="group text-left bg-white border-2 border-stone-200 hover:border-stone-900 rounded-2xl p-7 transition-all duration-200 hover:shadow-md"
+              >
+                <div className="w-12 h-12 rounded-xl bg-stone-100 group-hover:bg-stone-900 flex items-center justify-center mb-5 transition-colors">
+                  <Target className="w-6 h-6 text-stone-600 group-hover:text-stone-50 transition-colors" />
+                </div>
+                <h3 className="display-font text-xl font-semibold text-stone-900 mb-2">Tailor for a Role</h3>
+                <p className="text-sm text-stone-500 leading-relaxed">
+                  Have a master resume already? Paste it alongside a job description and get tailored bullets, ATS scoring, and actionable Quick Wins.
+                </p>
+                <div className="mt-5 flex items-center gap-1.5 text-xs font-medium text-stone-400 group-hover:text-stone-900 transition-colors">
+                  I have a master resume <ArrowRight className="w-3.5 h-3.5" />
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── MASTER RESUME BUILDER ── */}
+        {mode === 'master' && (
+          <div>
+            <div className="mb-8 max-w-3xl">
+              <h2 className="display-font text-4xl font-semibold text-stone-900 leading-tight mb-3">
+                Build your <span className="text-stone-400">master resume.</span>
+              </h2>
+              <p className="text-stone-600 leading-relaxed">
+                Just tell your story the way you'd explain it to a friend. No structure, no bullet points needed — narrate what you worked on, what problems you solved, what changed because of you. The AI will act as your career coach and extract the strongest resume bullets from your narrative.
+              </p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-stone-200 overflow-hidden mb-5">
+              <div className="px-5 py-3 border-b border-stone-200 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-stone-500" />
+                <h3 className="text-sm font-semibold text-stone-900">Raw Experience Notes</h3>
+                <span className="text-xs text-stone-400 ml-auto">{rawNotes.length} chars</span>
+              </div>
+              <textarea
+                value={rawNotes}
+                onChange={(e) => setRawNotes(e.target.value)}
+                placeholder={`Just tell your story — no structure needed. For example:\n\n"At Stripe I was on the fraud team. We had this big problem where our manual review queue was taking 3 days to clear and merchants were losing money. I basically took it on myself to figure out why. I ran a bunch of interviews with the ops team, mapped out the whole workflow, and realised 60% of cases were getting rerouted because of a broken triage rule. I rewrote the logic, got eng to ship it in a sprint, and the queue time dropped to under 4 hours. My manager said it saved us around $2M in chargeback exposure that quarter."\n\nTell me about your roles, what you worked on, problems you solved, decisions you made, outcomes you drove. I'll extract the resume bullets.`}
+                className="w-full h-80 p-5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none resize-none"
+                style={{ fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace', fontSize: '13px', lineHeight: '1.6' }}
+              />
+            </div>
+
+            <button
+              onClick={buildMasterResume}
+              disabled={isBuildingMaster || !rawNotes.trim()}
+              className="px-8 py-4 bg-stone-900 text-stone-50 rounded-xl font-medium text-sm hover:bg-stone-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm mb-6"
+            >
+              {isBuildingMaster ? (
+                <><Loader2 className="w-4 h-4 animate-spin" />Building master resume...</>
+              ) : (
+                <><Sparkles className="w-4 h-4" />{masterResult ? 'Rebuild' : 'Build Master Resume'}</>
+              )}
+            </button>
+
+            {masterError && (
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-red-900">{masterError}</div>
+              </div>
+            )}
+
+            {masterResult && (
+              <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
+                <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span className="text-sm font-semibold text-stone-900">Master Resume Built</span>
+                    <span className="text-xs text-stone-400">· {masterResult.master_experiences.length} roles</span>
+                  </div>
+                  <button
+                    onClick={useForTailoring}
+                    className="px-4 py-2 bg-stone-900 text-stone-50 rounded-lg text-xs font-medium hover:bg-stone-800 transition-all flex items-center gap-1.5 shadow-sm"
+                  >
+                    Use for Role Tailoring <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="divide-y divide-stone-100">
+                  {masterResult.master_experiences.map((exp, expIdx) => (
+                    <div key={expIdx} className="p-6">
+                      <div className="flex items-baseline justify-between mb-1">
+                        <h4 className="font-semibold" style={{ color: '#1F4E79' }}>{exp.company}</h4>
+                        <span className="text-xs text-stone-500 italic">{exp.dates}</span>
+                      </div>
+                      <p className="text-sm italic mb-4" style={{ color: '#1F4E79' }}>{exp.role}</p>
+                      <ul className="space-y-2.5">
+                        {exp.bullets.map((b, bIdx) => (
+                          <li key={bIdx} className="flex items-start gap-3 text-sm text-stone-800 leading-relaxed">
+                            <span className="text-stone-400 mt-0.5">•</span>
+                            <span>{b}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── TAILOR FOR A ROLE ── */}
+        {mode === 'tailor' && (
+        <div>
         <div className="mb-10 max-w-3xl">
           <h2 className="display-font text-4xl font-semibold text-stone-900 leading-tight mb-3">
             Tailor. Score. <span className="text-stone-400">Apply.</span>
@@ -714,6 +927,9 @@ You'll be a great fit if you:
         <div className="mt-12 pt-6 border-t border-stone-200 text-xs text-stone-500 leading-relaxed">
           <strong className="text-stone-700">POC v3 — what's new:</strong> Quick Wins are now actionable. Select the ones you want, click "Apply", and Claude regenerates the bullets with those keywords incorporated (truthfully — no inventing). The score recomputes and shows the delta. Reset anytime to return to the original tailored version.
         </div>
+        </div>
+        )}
+
       </main>
     </div>
   );
