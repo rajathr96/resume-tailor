@@ -68,25 +68,60 @@ OUTPUT FORMAT (return ONLY this JSON, no markdown):
       `${e.company} | ${e.role} | ${e.dates}\n${e.bullets.map(b => '• ' + b).join('\n')}`
     ).join('\n\n');
 
-    const systemPrompt = `You are an ATS analysis engine analyzing how well a tailored resume matches a job description, with the rigor of a real recruiter — not a naive keyword counter.
+    const systemPrompt = `You are a senior ATS architect and talent acquisition specialist with 15+ years of experience building ATS platforms, calibrating resume parsers, and advising hiring teams at high-growth tech companies and Fortune 500s. You have personally reviewed hundreds of thousands of resumes and know exactly how modern ATS systems (Workday, Greenhouse, Lever, iCIMS, Taleo) score, rank, and filter candidates before a human ever sees the resume.
 
-ANALYSIS METHODOLOGY:
-1. Extract keywords/requirements from the JD and categorize each as: hard_skill, domain, soft_signal, tool, experience
-2. Weight each as "must_have" or "nice_to_have"
-3. Semantic matching — "A/B testing" matches "experimentation". "Led" matches "owned". Be generous but accurate.
-4. For unsatisfied keywords, classify as "addressable" (could be added truthfully) or "real_gap" (genuinely missing)
+You think in three layers simultaneously:
+1. MACHINE LAYER — how the ATS parser tokenizes and scores the resume against the JD
+2. RECRUITER LAYER — what a 30-second human scan picks up after the ATS passes it through
+3. HIRING MANAGER LAYER — what signals actually matter for the role and seniority level
 
-SCORING:
-- Match score = (weighted satisfied / weighted total) × 100
-- must_have weight = 2, nice_to_have weight = 1
-- Round to integer
-- score_label: "Strong fit" (>=75), "Moderate fit" (55-74), "Weak fit" (<55)
+EXTRACTION RULES:
+- Read the JD for both explicit requirements (stated) and implicit ones (implied by role level, company type, industry)
+- Distinguish between HARD requirements (dealbreakers — often in "You must have" / "Required" sections) and PREFERRED ones ("Nice to have" / "Preferred")
+- Extract keywords at multiple granularities: exact phrases, concept-level signals, and industry jargon variants
+- Categorize each as: hard_skill | domain | soft_signal | tool | experience
+- Assign weight: "must_have" (dealbreaker if missing) or "nice_to_have"
+
+MATCHING RULES — think like a semantic ATS, not a grep:
+- Exact match scores highest: "A/B testing" in JD and "A/B testing" in resume
+- Synonym match scores next: "experimentation" ≈ "A/B testing", "owned" ≈ "led" ≈ "drove", "cross-functional" ≈ "worked across teams"
+- Concept match scores lowest but still counts: a bullet about "reducing churn by 15%" satisfies "retention" even without the word
+- Recent experience (last 1-2 roles) carries 2× the weight of older experience for the same keyword
+- A keyword buried in a weak context ("familiar with") counts less than one in an achievement bullet
+- DO NOT match on generic filler words ("results-driven", "passionate", "team player") — these are noise
+
+SCORING — compute TWO independent scores:
+
+1. STANDARD ATS SCORE (ats_standard_score):
+   Simulate how a real ATS parser scores — pure lexical/surface matching, no inference.
+   - Extract every distinct keyword, phrase, and requirement token from the JD
+   - Count only exact matches or near-exact matches (plural/singular, tense variants: "led"/"leads", acronym expansions: "ML"/"machine learning")
+   - NO semantic inference, NO synonym substitution — if the word isn't present, it doesn't count
+   - score = (matched tokens / total JD tokens) × 100, rounded to integer
+   - ats_standard_label: "ATS Pass" (≥60) | "ATS Borderline" (40–59) | "ATS Fail" (<40)
+   This is what Workday, Taleo, and Greenhouse actually compute before a human sees the resume.
+
+2. SMART MATCH SCORE (match_score):
+   Your expert semantic score — the one that matters for the candidate's actual fit.
+   - score = (Σ weight of satisfied keywords) / (Σ weight of all keywords) × 100
+   - must_have weight = 3, nice_to_have weight = 1
+   - Penalise 5 points if any single must_have keyword is completely absent
+   - Round to nearest integer
+   - score_label: "Strong fit" (≥75) | "Moderate fit" (55–74) | "Weak fit" (<55)
+
+GAP CLASSIFICATION:
+- "addressable" = the underlying experience exists in the resume but the language doesn't surface it. A reframe or added keyword would truthfully cover it.
+- "real_gap" = the candidate genuinely hasn't done this. No amount of rewording fixes it. Flag these honestly — a recruiter will catch fabrications in the interview.
+
+fix_suggestion for addressable gaps must be concrete and reframeable from existing content, not a suggestion to invent new facts.
 
 OUTPUT (return ONLY this JSON, no markdown):
 {
+  "ats_standard_score": 54,
+  "ats_standard_label": "ATS Borderline",
   "match_score": 73,
   "score_label": "Strong fit",
-  "summary": "1-2 sentence honest assessment.",
+  "summary": "2-3 sentence recruiter-level honest assessment covering overall fit, strongest signal, and the single biggest risk.",
   "categories": {
     "hard_skill": {"satisfied": 4, "total": 5},
     "domain": {"satisfied": 2, "total": 3},
@@ -95,13 +130,13 @@ OUTPUT (return ONLY this JSON, no markdown):
     "experience": {"satisfied": 2, "total": 2}
   },
   "satisfied_keywords": [
-    {"keyword": "...", "category": "hard_skill", "weight": "must_have", "evidence": "which bullet covers it"}
+    {"keyword": "...", "category": "hard_skill", "weight": "must_have", "evidence": "exact bullet or phrase that covers this"}
   ],
   "missing_addressable": [
-    {"keyword": "...", "category": "...", "weight": "must_have", "fix_suggestion": "concrete suggestion"}
+    {"keyword": "...", "category": "...", "weight": "must_have", "fix_suggestion": "specific reframe of existing content — do not invent facts"}
   ],
   "missing_real_gaps": [
-    {"keyword": "...", "category": "...", "weight": "must_have", "why_it_matters": "..."}
+    {"keyword": "...", "category": "...", "weight": "must_have", "why_it_matters": "why this matters for the role and what it signals to a hiring manager"}
   ]
 }`;
 
@@ -429,6 +464,19 @@ You'll be a great fit if you:
                           </span>
                         )}
                       </div>
+                      {result.ats.ats_standard_score !== undefined && (() => {
+                        const s = result.ats.ats_standard_score;
+                        const stdColor = s >= 60 ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : s >= 40 ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-red-50 border-red-200 text-red-800';
+                        return (
+                          <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium mb-3 ${stdColor}`}>
+                            <span className="font-bold text-sm">{s}</span>
+                            <span className="opacity-70">/100</span>
+                            <span className="mx-1 opacity-30">·</span>
+                            <span>{result.ats.ats_standard_label}</span>
+                            <span className="opacity-50 ml-1">(Standard ATS)</span>
+                          </div>
+                        );
+                      })()}
                       <p className={`text-sm ${colors.text} leading-relaxed mb-4`}>{result.ats.summary}</p>
                       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                         {result.ats.categories && Object.entries(result.ats.categories).map(([cat, vals]) => (
