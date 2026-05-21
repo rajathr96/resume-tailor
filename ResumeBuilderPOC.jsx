@@ -1,6 +1,6 @@
 'use client';
 import React, { useState } from 'react';
-import { Sparkles, Copy, Check, AlertCircle, Loader2, Briefcase, Target, Wand2, TrendingUp, CheckCircle2, XCircle, Lightbulb, Zap, RotateCcw, ArrowRight, FileText, ChevronLeft } from 'lucide-react';
+import { Sparkles, Copy, Check, AlertCircle, Loader2, Briefcase, Target, Wand2, TrendingUp, CheckCircle2, XCircle, Lightbulb, Zap, RotateCcw, ArrowRight, FileText, ChevronLeft, Pencil, X } from 'lucide-react';
 
 export default function ResumeBuilderPOC() {
   const [mode, setMode] = useState('select'); // 'select' | 'master' | 'tailor'
@@ -10,6 +10,17 @@ export default function ResumeBuilderPOC() {
   const [isBuildingMaster, setIsBuildingMaster] = useState(false);
   const [masterResult, setMasterResult] = useState(null);
   const [masterError, setMasterError] = useState(null);
+
+  // Inline edit + per-bullet refine state
+  const [editingKey, setEditingKey] = useState(null);
+  const [editingText, setEditingText] = useState('');
+  const [refineKey, setRefineKey] = useState(null);
+  const [refinePrompt, setRefinePrompt] = useState('');
+  const [isRefining, setIsRefining] = useState(false);
+
+  // Document-level rewrite state
+  const [docRefinePrompt, setDocRefinePrompt] = useState('');
+  const [isDocRefining, setIsDocRefining] = useState(false);
 
   // Tailor state
   const [masterResume, setMasterResume] = useState('');
@@ -256,6 +267,16 @@ OUTPUT (return ONLY this JSON, no markdown):
     setTimeout(() => setCopiedIdx(null), 1500);
   };
 
+  const loadSampleMaster = () => {
+    setRawNotes(`I'm currently at American Express as a Senior Analyst in Product & Analytics — started May 2025. My main thing has been owning a couple of high-impact features to improve retention for high-value customers. We were losing some of our best cardmembers and I helped build the journeys that brought retention up by about 15%. I also led an AI-driven strategy to cut down abuse in new customer acquisition — basically we were getting too many low-quality signups and I worked with data science to build something that improved customer quality and lifted gross credit margin by around 15%. On top of that I ran A/B tests on the Amex platform to figure out the best placement for offers — I defined the success metrics, worked with engineering on the experiments, and ended up improving recommendation click-through by 25%. I also drove prioritization for our customer decisioning platform, which was this really tricky balancing act between growth, profitability risk, and user experience. And I led a big migration project — moving anti-gaming control tables to new GCP-backed tables — which meant coordinating across engineering, marketing, tech, and channel teams.
+
+Before that I did a short internship at FinIQ from April to May 2024. It was a fintech startup building an AI-native stock market platform. I wrote the PRDs, defined user stories, and built out the roadmap. Worked closely with engineering, design, and sales to ship over 7 features. I also did market research to identify target segments and where we could expand our SaaS licensing.
+
+Before MBA I spent about 4 years at VMware (which got acquired by Broadcom) as a software engineer — went from MTS1 to MTS3. The highlight was something called Dr.WCP, a Kubernetes diagnostic tool I essentially incubated. The problem was that RCA on Kubernetes clusters was taking forever — I built a SaaS tool that cut that time by 60%, pitched it internally, and got $1M in VMware funding to develop it further. I also engaged directly with enterprise customers to understand their pain points and translate them into product requirements. I built automation for lift-and-shift migrations from on-prem to hyperscalers. Led 4+ multi-cloud features for VMware on AWS. I built a REST API abstraction for identity services across data centers and public clouds. And I built a SQL-based schema mismatch detection tool that ended up standardizing API versioning across 90+ products.
+
+I have an MBA from IMI B (2023-25) and a BTech in IT from Manipal.`);
+  };
+
   const loadSample = () => {
     setMasterResume(`Benjamin Franking | IMI B MBA 2023-25 | BTech IT Manipal
 
@@ -330,10 +351,19 @@ BULLET WRITING RULES:
 5. ONE BULLET PER DISTINCT ACHIEVEMENT: Don't bundle unrelated wins into one bullet. Split them.
 6. INCLUDE EVERYTHING: This is a master resume — capture all roles and all meaningful stories. Nothing gets left out.
 
+EDUCATION EXTRACTION RULES:
+- Scan the narrative for any mention of degrees, universities, colleges, institutes, graduation years, or academic qualifications.
+- Extract each one with: institution name (clean, full name), degree, field of study if mentioned, and dates/years if mentioned.
+- If dates are approximate or only a year range is given, use it as-is.
+- If nothing is mentioned, return an empty array.
+
 OUTPUT (return ONLY this JSON, no markdown):
 {
   "master_experiences": [
     {"company": "...", "role": "...", "dates": "...", "bullets": ["...", "..."]}
+  ],
+  "education": [
+    {"institution": "...", "degree": "...", "field": "...", "dates": "..."}
   ]
 }`;
       const userPrompt = `RAW EXPERIENCE NOTES:\n${rawNotes}\n\nBuild the master resume. Return ONLY the JSON.`;
@@ -347,14 +377,95 @@ OUTPUT (return ONLY this JSON, no markdown):
     }
   };
 
-  const masterResultToPlainText = (experiences) =>
-    experiences.map(e =>
+  const updateBullet = (expIdx, bIdx, newText) => {
+    setMasterResult(prev => ({
+      ...prev,
+      master_experiences: prev.master_experiences.map((exp, ei) =>
+        ei !== expIdx ? exp : {
+          ...exp,
+          bullets: exp.bullets.map((b, bi) => bi === bIdx ? newText : b)
+        }
+      )
+    }));
+  };
+
+  const refineBullet = async (expIdx, bIdx, bullet) => {
+    if (!refinePrompt.trim()) return;
+    setIsRefining(true);
+    try {
+      const response = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemPrompt: 'You are a resume bullet rewriter. Rewrite the given bullet per the user\'s instruction. Keep it truthful — do not invent new facts, metrics, or tools not present in the original. Return ONLY the rewritten bullet text, single line, no markdown, no preamble.',
+          userPrompt: `Original bullet: "${bullet}"\n\nInstruction: ${refinePrompt}\n\nRewrite it.`,
+          maxTokens: 200,
+        }),
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+      const rewritten = data.text.replace(/^["•\-\s]+/, '').replace(/["]+$/, '').trim();
+      updateBullet(expIdx, bIdx, rewritten);
+      setRefineKey(null);
+      setRefinePrompt('');
+    } catch (err) {
+      // silently fail — user can retry
+    } finally {
+      setIsRefining(false);
+    }
+  };
+
+  const refineDocument = async () => {
+    if (!docRefinePrompt.trim() || !masterResult) return;
+    setIsDocRefining(true);
+    try {
+      const systemPrompt = `You are a senior resume strategist. You are given an already-built master resume in JSON and a user instruction. Apply the instruction across the whole document — rewrite, reorder, or reframe bullets as needed — while preserving all original facts, metrics, company names, and dates. Do not invent anything new.
+
+OUTPUT (return ONLY this JSON, no markdown):
+{
+  "master_experiences": [
+    {"company": "...", "role": "...", "dates": "...", "bullets": ["...", "..."]}
+  ],
+  "education": [
+    {"institution": "...", "degree": "...", "field": "...", "dates": "..."}
+  ]
+}`;
+      const userPrompt = `CURRENT MASTER RESUME:\n${JSON.stringify(masterResult, null, 2)}\n\nINSTRUCTION: ${docRefinePrompt}\n\nApply the instruction and return the updated resume JSON.`;
+      const response = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ systemPrompt, userPrompt, maxTokens: 4000 }),
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+      const raw = data.text;
+      const start = raw.indexOf('{');
+      const end = raw.lastIndexOf('}');
+      const parsed = JSON.parse(raw.slice(start, end + 1));
+      setMasterResult(parsed);
+      setDocRefinePrompt('');
+    } catch (err) {
+      // silently fail — user can retry
+    } finally {
+      setIsDocRefining(false);
+    }
+  };
+
+  const masterResultToPlainText = (result) => {
+    const exp = result.master_experiences.map(e =>
       `${e.company} | ${e.role} | ${e.dates}\n${e.bullets.map(b => `• ${b}`).join('\n')}`
     ).join('\n\n');
+    const edu = result.education?.length
+      ? '\n\nEDUCATION\n' + result.education.map(e =>
+          `${e.institution} | ${e.degree}${e.field ? ', ' + e.field : ''}${e.dates ? ' | ' + e.dates : ''}`
+        ).join('\n')
+      : '';
+    return exp + edu;
+  };
 
   const useForTailoring = () => {
     if (!masterResult) return;
-    setMasterResume(masterResultToPlainText(masterResult.master_experiences));
+    setMasterResume(masterResultToPlainText(masterResult));
     setMode('tailor');
   };
 
@@ -376,11 +487,11 @@ OUTPUT (return ONLY this JSON, no markdown):
 
   return (
     <div className="min-h-screen bg-stone-50" style={{ fontFamily: '"Inter", system-ui, sans-serif' }}>
-      <style>{`
+      <style dangerouslySetInnerHTML={{ __html: `
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
         .display-font { font-family: 'Fraunces', Georgia, serif; }
         .bullet-card:hover .copy-btn { opacity: 1; }
-      `}</style>
+      ` }} />
 
       <header className="border-b border-stone-200 bg-white">
         <div className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between">
@@ -400,6 +511,11 @@ OUTPUT (return ONLY this JSON, no markdown):
               </p>
             </div>
           </div>
+          {mode === 'master' && (
+            <button onClick={loadSampleMaster} className="text-sm text-stone-600 hover:text-stone-900 transition-colors underline underline-offset-4">
+              Load sample data
+            </button>
+          )}
           {mode === 'tailor' && (
             <button onClick={loadSample} className="text-sm text-stone-600 hover:text-stone-900 transition-colors underline underline-offset-4">
               Load sample data
@@ -526,16 +642,137 @@ OUTPUT (return ONLY this JSON, no markdown):
                         <span className="text-xs text-stone-500 italic">{exp.dates}</span>
                       </div>
                       <p className="text-sm italic mb-4" style={{ color: '#1F4E79' }}>{exp.role}</p>
-                      <ul className="space-y-2.5">
-                        {exp.bullets.map((b, bIdx) => (
-                          <li key={bIdx} className="flex items-start gap-3 text-sm text-stone-800 leading-relaxed">
-                            <span className="text-stone-400 mt-0.5">•</span>
-                            <span>{b}</span>
-                          </li>
-                        ))}
+                      <ul className="space-y-3">
+                        {exp.bullets.map((b, bIdx) => {
+                          const key = `${expIdx}-${bIdx}`;
+                          const isEditing = editingKey === key;
+                          const isRefineOpen = refineKey === key;
+                          return (
+                            <li key={bIdx} className="group">
+                              <div className="flex items-start gap-3 text-sm text-stone-800 leading-relaxed">
+                                <span className="text-stone-400 mt-0.5 flex-shrink-0">•</span>
+                                {isEditing ? (
+                                  <textarea
+                                    autoFocus
+                                    value={editingText}
+                                    onChange={e => setEditingText(e.target.value)}
+                                    onBlur={() => {
+                                      if (editingText.trim()) updateBullet(expIdx, bIdx, editingText.trim());
+                                      setEditingKey(null);
+                                    }}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Escape') setEditingKey(null);
+                                    }}
+                                    rows={3}
+                                    className="flex-1 text-sm text-stone-800 leading-relaxed border border-stone-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
+                                  />
+                                ) : (
+                                  <span className="flex-1">{b}</span>
+                                )}
+                                {!isEditing && (
+                                  <div className="flex items-center gap-1.5 flex-shrink-0 ml-1">
+                                    <button
+                                      title="Edit manually"
+                                      onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
+                                      className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors"
+                                    >
+                                      <Pencil className="w-3 h-3" />
+                                      Edit
+                                    </button>
+                                    <button
+                                      title="Rewrite this bullet with AI"
+                                      onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }}
+                                      className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors ${isRefineOpen ? 'bg-stone-200 text-stone-700' : 'text-stone-400 hover:bg-stone-100 hover:text-stone-600'}`}
+                                    >
+                                      <Sparkles className="w-3 h-3" />
+                                      Refine with AI
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              {isRefineOpen && (
+                                <div className="mt-2 ml-5 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                                  <p className="text-xs text-amber-700 font-medium mb-2">What should change about this bullet?</p>
+                                  <div className="flex gap-2 items-center">
+                                    <input
+                                      autoFocus
+                                      type="text"
+                                      value={refinePrompt}
+                                      onChange={e => setRefinePrompt(e.target.value)}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') refineBullet(expIdx, bIdx, b);
+                                        if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); }
+                                      }}
+                                      placeholder="e.g. emphasize leadership, add more scope, make it punchier…"
+                                      className="flex-1 text-sm border border-amber-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
+                                    />
+                                    <button
+                                      onClick={() => refineBullet(expIdx, bIdx, b)}
+                                      disabled={isRefining || !refinePrompt.trim()}
+                                      className="px-3 py-2 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                                    >
+                                      {isRefining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                                      Rewrite
+                                    </button>
+                                    <button
+                                      onClick={() => { setRefineKey(null); setRefinePrompt(''); }}
+                                      className="p-2 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
                   ))}
+                </div>
+
+                {masterResult.education?.length > 0 && (
+                  <div className="border-t border-stone-200">
+                    <div className="px-6 py-3 bg-stone-50 border-b border-stone-100">
+                      <span className="text-xs font-semibold text-stone-500 uppercase tracking-wider">Education</span>
+                    </div>
+                    <div className="divide-y divide-stone-100">
+                      {masterResult.education.map((edu, i) => (
+                        <div key={i} className="px-6 py-4 flex items-baseline justify-between">
+                          <div>
+                            <h4 className="font-semibold text-sm text-stone-900">{edu.institution}</h4>
+                            <p className="text-sm text-stone-500 mt-0.5">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</p>
+                          </div>
+                          {edu.dates && <span className="text-xs text-stone-400 italic ml-4 flex-shrink-0">{edu.dates}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="border-t border-stone-200 px-6 py-5 bg-stone-50">
+                  <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-3">Rewrite entire resume with AI</p>
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="text"
+                      value={docRefinePrompt}
+                      onChange={e => setDocRefinePrompt(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') refineDocument();
+                      }}
+                      placeholder="e.g. make all bullets more concise, lead with impact everywhere, use stronger verbs…"
+                      className="flex-1 text-sm border border-stone-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-stone-400 bg-white"
+                    />
+                    <button
+                      onClick={refineDocument}
+                      disabled={isDocRefining || !docRefinePrompt.trim()}
+                      className="px-4 py-2.5 bg-stone-900 text-stone-50 rounded-lg text-sm font-medium hover:bg-stone-800 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-colors whitespace-nowrap"
+                    >
+                      {isDocRefining ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      {isDocRefining ? 'Rewriting…' : 'Rewrite'}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
