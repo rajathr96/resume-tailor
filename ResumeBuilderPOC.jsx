@@ -1,6 +1,6 @@
 'use client';
 import React, { useState } from 'react';
-import { Sparkles, Copy, Check, AlertCircle, Loader2, Briefcase, Target, Wand2, TrendingUp, CheckCircle2, XCircle, Lightbulb, Zap, RotateCcw, ArrowRight, FileText, ChevronLeft, Pencil, X } from 'lucide-react';
+import { Sparkles, Copy, Check, AlertCircle, Loader2, Briefcase, Target, Wand2, TrendingUp, CheckCircle2, XCircle, Lightbulb, Zap, RotateCcw, ArrowRight, FileText, ChevronLeft, Pencil, X, Upload, FileUp } from 'lucide-react';
 
 export default function ResumeBuilderPOC() {
   const [mode, setMode] = useState('select'); // 'select' | 'master' | 'tailor'
@@ -10,6 +10,10 @@ export default function ResumeBuilderPOC() {
   const [isBuildingMaster, setIsBuildingMaster] = useState(false);
   const [masterResult, setMasterResult] = useState(null);
   const [masterError, setMasterError] = useState(null);
+  const [inputMode, setInputMode] = useState('story'); // 'story' | 'upload'
+  const [uploadedFile, setUploadedFile] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isTransforming, setIsTransforming] = useState(false);
 
   // Inline edit + per-bullet refine state
   const [editingKey, setEditingKey] = useState(null);
@@ -335,6 +339,12 @@ HAT 1 — CAREER COACH: Listen holistically. Identify what the person actually a
 
 HAT 2 — RESUME STRATEGIST: Convert those insights into tight, credible resume bullets that a hiring manager would find compelling and an ATS would rank highly.
 
+ARCHETYPE & SENIORITY CONTEXT:
+This person is targeting ${archetype} roles at ${seniority} level. Use this to:
+- Prioritise and surface the bullets most relevant to this archetype (e.g. for Growth PM: activation, retention, experimentation, funnel metrics; for Platform/Technical PM: APIs, infra, developer experience, system design; for Fintech PM: compliance, payments, risk, financial products; for 0→1: ambiguity, discovery, GTM, founding moments)
+- Calibrate ownership language and scope to match the seniority level (APM → learning and contributing; Senior PM → owning outcomes and leading teams; Group PM → org-wide strategy and influence)
+- Lead with the signals that matter most to a hiring manager for this specific archetype
+
 EXTRACTION RULES — read the story, then ask yourself:
 - What did this person OWN vs just contribute to?
 - What CHANGED because of their work? (metric, speed, revenue, quality, scale)
@@ -374,6 +384,55 @@ OUTPUT (return ONLY this JSON, no markdown):
       setMasterError(`Build failed: ${err.message}. Try again.`);
     } finally {
       setIsBuildingMaster(false);
+    }
+  };
+
+  const transformResume = async () => {
+    if (!uploadedFile) return;
+    setIsTransforming(true);
+    setMasterError(null);
+    setMasterResult(null);
+    try {
+      // Step 1: extract text from PDF
+      const formData = new FormData();
+      formData.append('pdf', uploadedFile);
+      const extractRes = await fetch('/api/extract-pdf', { method: 'POST', body: formData });
+      const extractData = await extractRes.json();
+      if (extractData.error) throw new Error(extractData.error);
+
+      // Step 2: transform extracted text into master resume JSON
+      const systemPrompt = `You are a senior resume strategist with 20+ years of experience. You are given raw text extracted from someone's existing resume PDF (may have formatting artifacts from extraction). Your job is to restructure and strengthen it for a ${archetype} PM at ${seniority} level.
+
+YOUR TASKS:
+1. Parse all work experiences — identify company, role, dates, and bullets. Handle PDF extraction noise gracefully (broken lines, extra spaces, garbled formatting).
+2. Rewrite every bullet into sharp XYZ format: "[Strong verb] + [what you did with scope/context] + [quantified impact]". ~15-22 words, single line.
+3. Strengthen weak bullets — if a bullet is vague, elevate the language based on what's implied. NEVER invent facts or metrics not present in the original.
+4. Apply ${archetype} lens — reframe and prioritise bullets that matter most for this archetype (e.g. Growth PM: funnel, retention, experimentation; Fintech PM: payments, risk, compliance; Platform/Technical PM: APIs, infra, developer tools; 0→1: discovery, ambiguity, GTM).
+5. Calibrate seniority language to ${seniority} level.
+6. Extract education — institution, degree, field, dates.
+
+RULES:
+- Preserve all original facts, metrics, company names, and dates exactly.
+- Do not drop any role or experience.
+- Do not invent anything not in the source.
+
+OUTPUT (return ONLY this JSON, no markdown):
+{
+  "master_experiences": [
+    {"company": "...", "role": "...", "dates": "...", "bullets": ["...", "..."]}
+  ],
+  "education": [
+    {"institution": "...", "degree": "...", "field": "...", "dates": "..."}
+  ]
+}`;
+      const userPrompt = `EXTRACTED RESUME TEXT:\n${extractData.text}\n\nTransform this into a master resume. Return ONLY the JSON.`;
+      const text = await callClaude(systemPrompt, userPrompt, 4000);
+      const parsed = JSON.parse(text);
+      setMasterResult(parsed);
+    } catch (err) {
+      setMasterError(`Transform failed: ${err.message}. Try again.`);
+    } finally {
+      setIsTransforming(false);
     }
   };
 
@@ -581,36 +640,137 @@ OUTPUT (return ONLY this JSON, no markdown):
                 Build your <span className="text-stone-400">master resume.</span>
               </h2>
               <p className="text-stone-600 leading-relaxed">
-                Just tell your story the way you'd explain it to a friend. No structure, no bullet points needed — narrate what you worked on, what problems you solved, what changed because of you. The AI will act as your career coach and extract the strongest resume bullets from your narrative.
+                {inputMode === 'story'
+                  ? "Just tell your story the way you'd explain it to a friend. No structure needed — narrate what you worked on, what problems you solved, what changed because of you."
+                  : "Upload your existing resume PDF. We'll extract the content and restructure it into sharp, ATS-ready bullets framed for your target archetype."}
               </p>
             </div>
 
-            <div className="bg-white rounded-xl border border-stone-200 overflow-hidden mb-5">
-              <div className="px-5 py-3 border-b border-stone-200 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-stone-500" />
-                <h3 className="text-sm font-semibold text-stone-900">Raw Experience Notes</h3>
-                <span className="text-xs text-stone-400 ml-auto">{rawNotes.length} chars</span>
-              </div>
-              <textarea
-                value={rawNotes}
-                onChange={(e) => setRawNotes(e.target.value)}
-                placeholder={`Just tell your story — no structure needed. For example:\n\n"At Stripe I was on the fraud team. We had this big problem where our manual review queue was taking 3 days to clear and merchants were losing money. I basically took it on myself to figure out why. I ran a bunch of interviews with the ops team, mapped out the whole workflow, and realised 60% of cases were getting rerouted because of a broken triage rule. I rewrote the logic, got eng to ship it in a sprint, and the queue time dropped to under 4 hours. My manager said it saved us around $2M in chargeback exposure that quarter."\n\nTell me about your roles, what you worked on, problems you solved, decisions you made, outcomes you drove. I'll extract the resume bullets.`}
-                className="w-full h-80 p-5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none resize-none"
-                style={{ fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace', fontSize: '13px', lineHeight: '1.6' }}
-              />
+            {/* Toggle */}
+            <div className="flex gap-1 p-1 bg-stone-100 rounded-xl w-fit mb-5">
+              <button
+                onClick={() => setInputMode('story')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${inputMode === 'story' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+              >
+                <FileText className="w-4 h-4" /> Write your story
+              </button>
+              <button
+                onClick={() => setInputMode('upload')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${inputMode === 'upload' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+              >
+                <Upload className="w-4 h-4" /> Upload existing resume
+              </button>
             </div>
 
-            <button
-              onClick={buildMasterResume}
-              disabled={isBuildingMaster || !rawNotes.trim()}
-              className="px-8 py-4 bg-stone-900 text-stone-50 rounded-xl font-medium text-sm hover:bg-stone-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm mb-6"
-            >
-              {isBuildingMaster ? (
-                <><Loader2 className="w-4 h-4 animate-spin" />Building master resume...</>
-              ) : (
-                <><Sparkles className="w-4 h-4" />{masterResult ? 'Rebuild' : 'Build Master Resume'}</>
-              )}
-            </button>
+            {inputMode === 'story' && (
+              <div className="bg-white rounded-xl border border-stone-200 overflow-hidden mb-5">
+                <div className="px-5 py-3 border-b border-stone-200 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-stone-500" />
+                  <h3 className="text-sm font-semibold text-stone-900">Raw Experience Notes</h3>
+                  <span className="text-xs text-stone-400 ml-auto">{rawNotes.length} chars</span>
+                </div>
+                <textarea
+                  value={rawNotes}
+                  onChange={(e) => setRawNotes(e.target.value)}
+                  placeholder={`Just tell your story — no structure needed. For example:\n\n"At Stripe I was on the fraud team. We had this big problem where our manual review queue was taking 3 days to clear and merchants were losing money. I basically took it on myself to figure out why. I ran a bunch of interviews with the ops team, mapped out the whole workflow, and realised 60% of cases were getting rerouted because of a broken triage rule. I rewrote the logic, got eng to ship it in a sprint, and the queue time dropped to under 4 hours. My manager said it saved us around $2M in chargeback exposure that quarter."\n\nTell me about your roles, what you worked on, problems you solved, decisions you made, outcomes you drove. I'll extract the resume bullets.`}
+                  className="w-full h-80 p-5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none resize-none"
+                  style={{ fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace', fontSize: '13px', lineHeight: '1.6' }}
+                />
+              </div>
+            )}
+
+            {inputMode === 'upload' && (
+              <div className="mb-5">
+                <label
+                  onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={e => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    const f = e.dataTransfer.files[0];
+                    if (f?.type === 'application/pdf') setUploadedFile(f);
+                  }}
+                  className={`flex flex-col items-center justify-center w-full h-52 border-2 border-dashed rounded-xl cursor-pointer transition-all ${isDragging ? 'border-stone-500 bg-stone-100' : uploadedFile ? 'border-emerald-300 bg-emerald-50' : 'border-stone-300 bg-white hover:border-stone-400 hover:bg-stone-50'}`}
+                >
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    className="hidden"
+                    onChange={e => {
+                      const f = e.target.files[0];
+                      if (f) setUploadedFile(f);
+                    }}
+                  />
+                  {uploadedFile ? (
+                    <>
+                      <CheckCircle2 className="w-8 h-8 text-emerald-500 mb-3" />
+                      <p className="text-sm font-medium text-stone-900">{uploadedFile.name}</p>
+                      <p className="text-xs text-stone-500 mt-1">{(uploadedFile.size / 1024).toFixed(0)} KB · Click to change</p>
+                    </>
+                  ) : (
+                    <>
+                      <FileUp className="w-8 h-8 text-stone-400 mb-3" />
+                      <p className="text-sm font-medium text-stone-700">Drop your resume PDF here</p>
+                      <p className="text-xs text-stone-400 mt-1">or click to browse</p>
+                    </>
+                  )}
+                </label>
+              </div>
+            )}
+
+            <div className="bg-white rounded-xl border border-stone-200 p-5 mb-5">
+              <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-4">Shape the framing</p>
+              <div className="grid md:grid-cols-2 gap-5">
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-2">PM Archetype <span className="text-stone-400 font-normal">— what kind of PM are you?</span></label>
+                  <div className="flex flex-wrap gap-2">
+                    {archetypes.map(a => (
+                      <button key={a} onClick={() => setArchetype(a)}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${archetype === a ? 'bg-stone-900 text-stone-50' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}>
+                        {a}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-2">Seniority <span className="text-stone-400 font-normal">— what level are you at?</span></label>
+                  <div className="flex flex-wrap gap-2">
+                    {seniorities.map(s => (
+                      <button key={s} onClick={() => setSeniority(s)}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${seniority === s ? 'bg-stone-900 text-stone-50' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {inputMode === 'story' ? (
+              <button
+                onClick={buildMasterResume}
+                disabled={isBuildingMaster || !rawNotes.trim()}
+                className="px-8 py-4 bg-stone-900 text-stone-50 rounded-xl font-medium text-sm hover:bg-stone-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm mb-6"
+              >
+                {isBuildingMaster ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" />Building master resume...</>
+                ) : (
+                  <><Sparkles className="w-4 h-4" />{masterResult ? 'Rebuild' : 'Build Master Resume'}</>
+                )}
+              </button>
+            ) : (
+              <button
+                onClick={transformResume}
+                disabled={isTransforming || !uploadedFile}
+                className="px-8 py-4 bg-stone-900 text-stone-50 rounded-xl font-medium text-sm hover:bg-stone-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm mb-6"
+              >
+                {isTransforming ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" />Transforming resume...</>
+                ) : (
+                  <><Sparkles className="w-4 h-4" />{masterResult ? 'Re-transform' : 'Transform Resume'}</>
+                )}
+              </button>
+            )}
 
             {masterError && (
               <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
