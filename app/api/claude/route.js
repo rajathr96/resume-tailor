@@ -2,6 +2,23 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function generateWithRetry(model, payload, maxRetries = 3) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await model.generateContent(payload);
+    } catch (err) {
+      const is503 = err.message?.includes('503') || err.message?.includes('high demand');
+      if (is503 && attempt < maxRetries) {
+        await sleep(1500 * 2 ** attempt); // 1.5s, 3s, 6s
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 export async function POST(request) {
   try {
     const { systemPrompt, userPrompt, maxTokens = 4000 } = await request.json();
@@ -11,7 +28,7 @@ export async function POST(request) {
       systemInstruction: systemPrompt,
     });
 
-    const result = await model.generateContent({
+    const result = await generateWithRetry(model, {
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       generationConfig: {
         maxOutputTokens: maxTokens,
