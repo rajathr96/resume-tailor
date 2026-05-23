@@ -1,6 +1,6 @@
 'use client';
-import React, { useState } from 'react';
-import { Sparkles, Copy, Check, AlertCircle, Loader2, Briefcase, Target, Wand2, TrendingUp, CheckCircle2, XCircle, Lightbulb, Zap, RotateCcw, ArrowRight, FileText, ChevronLeft, Pencil, X, Upload, FileUp } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Sparkles, Copy, Check, AlertCircle, Loader2, Briefcase, Target, Wand2, TrendingUp, CheckCircle2, XCircle, Lightbulb, Zap, RotateCcw, ArrowRight, FileText, ChevronLeft, Pencil, X, Upload, FileUp, Download } from 'lucide-react';
 
 export default function ResumeBuilderPOC() {
   const [mode, setMode] = useState('select'); // 'select' | 'master' | 'tailor'
@@ -42,8 +42,91 @@ export default function ResumeBuilderPOC() {
   const [copiedIdx, setCopiedIdx] = useState(null);
   const [activeTab, setActiveTab] = useState('bullets');
 
+  // Load persisted state on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('resume-tailor-state');
+      if (!saved) return;
+      const s = JSON.parse(saved);
+      if (s.mode) setMode(s.mode);
+      if (s.rawNotes) setRawNotes(s.rawNotes);
+      if (s.masterResult) setMasterResult(s.masterResult);
+      if (s.archetype) setArchetype(s.archetype);
+      if (s.seniority) setSeniority(s.seniority);
+      if (s.masterResume) setMasterResume(s.masterResume);
+      if (s.jobDescription) setJobDescription(s.jobDescription);
+      if (s.result) setResult(s.result);
+      if (s.originalResult) setOriginalResult(s.originalResult);
+      if (s.activeTab) setActiveTab(s.activeTab);
+    } catch (_) {}
+  }, []);
+
+  // Persist state on every relevant change
+  useEffect(() => {
+    try {
+      localStorage.setItem('resume-tailor-state', JSON.stringify({
+        mode, rawNotes, masterResult, archetype, seniority,
+        masterResume, jobDescription, result, originalResult, activeTab,
+      }));
+    } catch (_) {}
+  }, [mode, rawNotes, masterResult, archetype, seniority, masterResume, jobDescription, result, originalResult, activeTab]);
+
   const archetypes = ['Fintech PM', 'Growth PM', 'Platform/Technical PM', 'Consumer PM', 'B2B/Enterprise PM', '0→1 / Product Strategy'];
   const seniorities = ['APM / Associate PM', 'PM (IC)', 'Senior PM', 'Group PM / Lead PM'];
+
+  const exportToPDF = (experiences, education, title = 'Resume') => {
+    const expHtml = experiences.map(e => `
+      <div class="experience">
+        <div class="exp-header">
+          <span class="company">${e.company}</span>
+          <span class="dates">${e.dates}</span>
+        </div>
+        <div class="role">${e.role}</div>
+        <ul>
+          ${e.bullets.map(b => `<li>${b}</li>`).join('')}
+        </ul>
+      </div>
+    `).join('');
+
+    const eduHtml = education?.length ? `
+      <div class="section-title">Education</div>
+      ${education.map(e => `
+        <div class="experience">
+          <div class="exp-header">
+            <span class="company">${e.institution}</span>
+            <span class="dates">${e.dates ?? ''}</span>
+          </div>
+          <div class="role">${e.degree}${e.field ? ', ' + e.field : ''}</div>
+        </div>
+      `).join('')}
+    ` : '';
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+    <title>${title}</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: 'Georgia', serif; font-size: 11pt; color: #1a1a1a; padding: 36px 48px; line-height: 1.5; }
+      .section-title { font-size: 9pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.1em; color: #555; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin: 20px 0 10px; }
+      .experience { margin-bottom: 14px; }
+      .exp-header { display: flex; justify-content: space-between; align-items: baseline; }
+      .company { font-weight: bold; color: #1F4E79; font-size: 11pt; }
+      .dates { font-size: 9.5pt; color: #666; font-style: italic; }
+      .role { font-style: italic; color: #1F4E79; font-size: 10.5pt; margin: 2px 0 6px; }
+      ul { padding-left: 16px; }
+      li { margin-bottom: 4px; font-size: 10.5pt; }
+      @media print { body { padding: 24px 36px; } }
+    </style></head>
+    <body>
+      <div class="section-title">Experience</div>
+      ${expHtml}
+      ${eduHtml}
+    </body></html>`;
+
+    const w = window.open('', '_blank');
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => { w.print(); };
+  };
 
   const callClaude = async (systemPrompt, userPrompt, maxTokens = 4000) => {
     const response = await fetch('/api/claude', {
@@ -787,12 +870,20 @@ OUTPUT (return ONLY this JSON, no markdown):
                     <span className="text-sm font-semibold text-stone-900">Master Resume Built</span>
                     <span className="text-xs text-stone-400">· {masterResult.master_experiences.length} roles</span>
                   </div>
-                  <button
-                    onClick={useForTailoring}
-                    className="px-4 py-2 bg-stone-900 text-stone-50 rounded-lg text-xs font-medium hover:bg-stone-800 transition-all flex items-center gap-1.5 shadow-sm"
-                  >
-                    Use for Role Tailoring <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => exportToPDF(masterResult.master_experiences, masterResult.education, 'Master Resume')}
+                      className="px-3 py-2 text-xs font-medium text-stone-700 border border-stone-200 hover:bg-stone-50 rounded-lg flex items-center gap-1.5 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Export PDF
+                    </button>
+                    <button
+                      onClick={useForTailoring}
+                      className="px-4 py-2 bg-stone-900 text-stone-50 rounded-lg text-xs font-medium hover:bg-stone-800 transition-all flex items-center gap-1.5 shadow-sm"
+                    >
+                      Use for Role Tailoring <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
                 <div className="divide-y divide-stone-100">
                   {masterResult.master_experiences.map((exp, expIdx) => (
@@ -1144,7 +1235,13 @@ OUTPUT (return ONLY this JSON, no markdown):
                       </div>
                     </div>
                   )}
-                  <div className="px-6 py-3 border-b border-stone-100 flex items-center justify-end">
+                  <div className="px-6 py-3 border-b border-stone-100 flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => exportToPDF(result.tailored_experiences, [], 'Tailored Resume')}
+                      className="px-3 py-1.5 text-xs font-medium text-stone-700 border border-stone-200 hover:bg-stone-50 rounded-md flex items-center gap-1.5 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Export PDF
+                    </button>
                     <button onClick={copyAll} className="px-3 py-1.5 text-xs font-medium text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-md flex items-center gap-1.5 transition-colors">
                       {copiedIdx === 'all' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                       {copiedIdx === 'all' ? 'Copied' : 'Copy all'}
