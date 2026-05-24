@@ -11,6 +11,11 @@ export default function ResumeBuilderPOC() {
   const [masterResult, setMasterResult] = useState(null);
   const [masterError, setMasterError] = useState(null);
   const [inputMode, setInputMode] = useState('story'); // 'story' | 'upload'
+  const [personalInfo, setPersonalInfo] = useState({ name: '', title: '', email: '', phone: '', location: '', linkedin: '' });
+  const [newSkill, setNewSkill] = useState('');
+  const [tailoredNewSkill, setTailoredNewSkill] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState('template1');
+  const [selectedTailoredTemplate, setSelectedTailoredTemplate] = useState('template1');
   const [uploadedFile, setUploadedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isTransforming, setIsTransforming] = useState(false);
@@ -58,6 +63,7 @@ export default function ResumeBuilderPOC() {
       if (s.result) setResult(s.result);
       if (s.originalResult) setOriginalResult(s.originalResult);
       if (s.activeTab) setActiveTab(s.activeTab);
+      if (s.personalInfo) setPersonalInfo(s.personalInfo);
     } catch (_) {}
   }, []);
 
@@ -66,66 +72,185 @@ export default function ResumeBuilderPOC() {
     try {
       localStorage.setItem('resume-tailor-state', JSON.stringify({
         mode, rawNotes, masterResult, archetype, seniority,
-        masterResume, jobDescription, result, originalResult, activeTab,
+        masterResume, jobDescription, result, originalResult, activeTab, personalInfo,
       }));
     } catch (_) {}
-  }, [mode, rawNotes, masterResult, archetype, seniority, masterResume, jobDescription, result, originalResult, activeTab]);
+  }, [mode, rawNotes, masterResult, archetype, seniority, masterResume, jobDescription, result, originalResult, activeTab, personalInfo]);
 
   const archetypes = ['Fintech PM', 'Growth PM', 'Platform/Technical PM', 'Consumer PM', 'B2B/Enterprise PM', '0→1 / Product Strategy'];
   const seniorities = ['APM / Associate PM', 'PM (IC)', 'Senior PM', 'Group PM / Lead PM'];
 
-  const exportToPDF = (experiences, education, title = 'Resume') => {
-    const expHtml = experiences.map(e => `
-      <div class="experience">
-        <div class="exp-header">
-          <span class="company">${e.company}</span>
-          <span class="dates">${e.dates}</span>
-        </div>
-        <div class="role">${e.role}</div>
-        <ul>
-          ${e.bullets.map(b => `<li>${b}</li>`).join('')}
-        </ul>
-      </div>
-    `).join('');
+  const exportToPDF = (mr, pi) => {
+    const info = pi || personalInfo;
+    const contactParts = [info.email, info.phone, info.location, info.linkedin].filter(Boolean);
 
-    const eduHtml = education?.length ? `
-      <div class="section-title">Education</div>
-      ${education.map(e => `
-        <div class="experience">
-          <div class="exp-header">
-            <span class="company">${e.institution}</span>
-            <span class="dates">${e.dates ?? ''}</span>
-          </div>
-          <div class="role">${e.degree}${e.field ? ', ' + e.field : ''}</div>
+    const expHtml = mr.master_experiences.map(e => `
+      <div class="exp-block">
+        <div class="exp-row">
+          <span class="exp-title">${e.role} | ${e.company}</span>
+          <span class="exp-dates">${e.dates}</span>
         </div>
-      `).join('')}
-    ` : '';
+        <ul>${e.bullets.map(b => `<li>${b}</li>`).join('')}</ul>
+      </div>`).join('');
+
+    const eduHtml = mr.education?.length ? mr.education.map(e => `
+      <div class="exp-block">
+        <div class="exp-row">
+          <span class="exp-title">${e.degree}${e.field ? `, ${e.field}` : ''}</span>
+          <span class="exp-dates">${e.dates ?? ''}</span>
+        </div>
+        <div class="edu-institution">${e.institution}</div>
+      </div>`).join('') : '';
+
+    const skillsChunks = [];
+    const skills = mr.skills ?? [];
+    for (let i = 0; i < skills.length; i += 6) skillsChunks.push(skills.slice(i, i + 6));
+    const skillsHtml = skillsChunks.map(row => `<div class="skills-line">${row.join(' • ')}</div>`).join('');
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
-    <title>${title}</title>
-    <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { font-family: 'Georgia', serif; font-size: 11pt; color: #1a1a1a; padding: 36px 48px; line-height: 1.5; }
-      .section-title { font-size: 9pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.1em; color: #555; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin: 20px 0 10px; }
-      .experience { margin-bottom: 14px; }
-      .exp-header { display: flex; justify-content: space-between; align-items: baseline; }
-      .company { font-weight: bold; color: #1F4E79; font-size: 11pt; }
-      .dates { font-size: 9.5pt; color: #666; font-style: italic; }
-      .role { font-style: italic; color: #1F4E79; font-size: 10.5pt; margin: 2px 0 6px; }
-      ul { padding-left: 16px; }
-      li { margin-bottom: 4px; font-size: 10.5pt; }
-      @media print { body { padding: 24px 36px; } }
-    </style></head>
-    <body>
-      <div class="section-title">Experience</div>
-      ${expHtml}
-      ${eduHtml}
-    </body></html>`;
+<title>${info.name || 'Resume'}</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: Calibri, Arial, sans-serif; font-size:10.5pt; color:#1a1a1a; padding:32px 48px; line-height:1.45; }
+  .name { font-size:26pt; font-weight:bold; color:#1a1a1a; }
+  .prof-title { font-size:11pt; color:#555; margin:2px 0 5px; }
+  .contact { text-align:center; font-size:9.5pt; color:#333; margin:4px 0 8px; }
+  .top-rule { border:none; border-top:1.5px solid #1F4E79; margin:6px 0 14px; }
+  .section-header { color:#1F4E79; font-weight:bold; font-size:10pt; text-transform:uppercase; letter-spacing:0.08em; margin:14px 0 2px; }
+  .section-rule { border:none; border-top:1px solid #1F4E79; margin:2px 0 10px; }
+  .summary { font-size:10.5pt; line-height:1.5; margin-bottom:4px; }
+  .exp-block { margin-bottom:11px; }
+  .exp-row { display:flex; justify-content:space-between; align-items:baseline; }
+  .exp-title { font-weight:bold; font-size:10.5pt; }
+  .exp-dates { font-size:9.5pt; color:#444; }
+  ul { padding-left:16px; margin-top:3px; }
+  li { font-size:10pt; margin-bottom:3px; }
+  .edu-institution { font-size:10pt; color:#555; margin-top:1px; }
+  .skills-line { font-size:10pt; margin-bottom:3px; }
+  @media print { body { padding:20px 36px; } @page { margin:0.5in; } }
+</style></head>
+<body>
+  <div class="name">${info.name || 'Your Name'}</div>
+  <div class="prof-title">${info.title || 'Your Title / Profession'}</div>
+  <div class="contact">${contactParts.length ? contactParts.join(' | ') : 'email@example.com | (123) 456-7890 | City, Country | linkedin.com/in/yourname'}</div>
+  <hr class="top-rule"/>
+
+  ${mr.summary ? `
+  <div class="section-header">Professional Summary</div>
+  <hr class="section-rule"/>
+  <div class="summary">${mr.summary}</div>` : ''}
+
+  <div class="section-header">Work Experience</div>
+  <hr class="section-rule"/>
+  ${expHtml}
+
+  ${eduHtml ? `
+  <div class="section-header">Education</div>
+  <hr class="section-rule"/>
+  ${eduHtml}` : ''}
+
+  ${skillsHtml ? `
+  <div class="section-header">Skills</div>
+  <hr class="section-rule"/>
+  ${skillsHtml}` : ''}
+</body></html>`;
 
     const w = window.open('', '_blank');
     w.document.write(html);
     w.document.close();
-    w.onload = () => { w.print(); };
+    w.onload = () => w.print();
+  };
+
+  const exportToPDFTemplate2 = (mr, pi) => {
+    const info = pi || personalInfo;
+    const contactParts = [
+      info.phone ?? null,
+      info.email ?? null,
+      info.linkedin ?? null,
+      info.location ?? null,
+    ].filter(Boolean);
+
+    const expHtml = mr.master_experiences.map(e => `
+      <div class="exp-block">
+        <div class="exp-title">${e.role}</div>
+        <div class="exp-company">${e.company}</div>
+        <div class="exp-dates">${e.dates}</div>
+        <ul>${e.bullets.map(b => `<li>${b}</li>`).join('')}</ul>
+      </div>`).join('');
+
+    const eduHtml = mr.education?.length ? mr.education.map(e => `
+      <div class="edu-block">
+        <div class="edu-degree">${e.degree}${e.field ? `, ${e.field}` : ''}</div>
+        <div class="edu-institution">${e.institution}</div>
+        <div class="edu-dates">${e.dates ?? ''}</div>
+      </div>`).join('') : '';
+
+    const topRoles = mr.master_experiences.slice(0, 2);
+    const achievementsHtml = topRoles.map(e => e.bullets?.[0] ? `
+      <div class="achievement-block">
+        <div class="achievement-title">${e.company}</div>
+        <div class="achievement-desc">${e.bullets[0]}</div>
+      </div>` : '').join('');
+
+    const skillsHtml = (mr.skills ?? []).join(', ');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>${info.name || 'Resume'}</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; }
+  body { font-family: Calibri, Arial, sans-serif; font-size:9pt; color:#1a1a1a; padding:14px 22px; line-height:1.3; }
+  .header { margin-bottom:8px; padding-bottom:7px; border-bottom:1px solid #bbb; }
+  .name { font-size:20pt; font-weight:900; color:#1a1a1a; text-transform:uppercase; letter-spacing:0.02em; line-height:1.05; }
+  .prof-title { font-size:9.5pt; font-weight:600; color:#1F4E79; margin:2px 0 3px; }
+  .contact-row { font-size:8pt; color:#444; display:flex; gap:12px; flex-wrap:wrap; }
+  .two-col { display:flex; gap:18px; }
+  .left-col { flex:0 0 54%; }
+  .right-col { flex:1; min-width:0; }
+  .section-header { font-weight:bold; font-size:8.5pt; text-transform:uppercase; letter-spacing:0.07em; color:#1a1a1a; margin-top:9px; margin-bottom:1px; }
+  .section-rule { border:none; border-top:1px solid #1a1a1a; margin:1px 0 5px; }
+  .exp-block { margin-bottom:7px; }
+  .exp-title { font-weight:bold; font-size:9pt; }
+  .exp-company { font-size:8pt; color:#1F4E79; font-weight:600; }
+  .exp-dates { font-size:7.5pt; color:#666; margin:1px 0 2px; }
+  ul { padding-left:12px; margin-top:2px; }
+  li { font-size:8.5pt; margin-bottom:1px; line-height:1.3; }
+  .summary-text { font-size:8.5pt; line-height:1.4; }
+  .edu-block { margin-bottom:6px; }
+  .edu-degree { font-weight:bold; font-size:8.5pt; }
+  .edu-institution { color:#1F4E79; font-weight:600; font-size:8pt; }
+  .edu-dates { font-size:7.5pt; color:#666; margin-top:1px; }
+  .achievement-block { margin-bottom:5px; }
+  .achievement-title { font-weight:bold; font-size:8.5pt; }
+  .achievement-desc { font-size:8pt; color:#444; margin-top:1px; line-height:1.3; }
+  .skills-text { font-size:8.5pt; line-height:1.5; }
+  @media print { body { padding:10px 18px; } @page { size:letter; margin:0.3in; } }
+</style></head>
+<body>
+  <div class="header">
+    <div class="name">${info.name || 'YOUR NAME'}</div>
+    <div class="prof-title">${info.title || 'Your Professional Title'}</div>
+    <div class="contact-row">${contactParts.join(' &nbsp;·&nbsp; ') || '000-000-0000 &nbsp;·&nbsp; you@email.com &nbsp;·&nbsp; LinkedIn &nbsp;·&nbsp; City, State'}</div>
+  </div>
+  <div class="two-col">
+    <div class="left-col">
+      <div class="section-header">Experience</div>
+      <hr class="section-rule"/>
+      ${expHtml}
+    </div>
+    <div class="right-col">
+      ${mr.summary ? `<div class="section-header">Summary</div><hr class="section-rule"/><div class="summary-text">${mr.summary}</div>` : ''}
+      ${eduHtml ? `<div class="section-header">Education</div><hr class="section-rule"/>${eduHtml}` : ''}
+      ${achievementsHtml ? `<div class="section-header">Key Achievements</div><hr class="section-rule"/>${achievementsHtml}` : ''}
+      ${skillsHtml ? `<div class="section-header">Skills</div><hr class="section-rule"/><div class="skills-text">${skillsHtml}</div>` : ''}
+    </div>
+  </div>
+</body></html>`;
+
+    const w = window.open('', '_blank');
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => w.print();
   };
 
   const callClaude = async (systemPrompt, userPrompt, maxTokens = 4000) => {
@@ -272,7 +397,7 @@ OUTPUT (return ONLY this JSON, no markdown):
       const ats = await scoreResume(tailored, jobDescription);
 
       setStage('');
-      const finalResult = { ...tailored, ats };
+      const finalResult = { ...tailored, ats, summary: masterResult?.summary || '', skills: masterResult?.skills || [], education: masterResult?.education || [] };
       setResult(finalResult);
       setOriginalResult(finalResult);
       setActiveTab('bullets');
@@ -306,7 +431,7 @@ OUTPUT (return ONLY this JSON, no markdown):
       const ats = await scoreResume(tailored, jobDescription);
 
       setStage('');
-      setResult({ ...tailored, ats });
+      setResult({ ...tailored, ats, summary: result.summary, skills: result.skills, education: result.education });
       setSelectedWins(new Set());
       setActiveTab('bullets');
     } catch (err) {
@@ -452,12 +577,14 @@ EDUCATION EXTRACTION RULES:
 
 OUTPUT (return ONLY this JSON, no markdown):
 {
+  "summary": "2-3 sentence professional summary synthesized from the narrative. Mention total years of experience, key domains, and strongest value proposition.",
   "master_experiences": [
     {"company": "...", "role": "...", "dates": "...", "bullets": ["...", "..."]}
   ],
   "education": [
     {"institution": "...", "degree": "...", "field": "...", "dates": "..."}
-  ]
+  ],
+  "skills": ["Skill 1", "Skill 2", "Skill 3"]
 }`;
       const userPrompt = `RAW EXPERIENCE NOTES:\n${rawNotes}\n\nBuild the master resume. Return ONLY the JSON.`;
       const text = await callClaude(systemPrompt, userPrompt, 4000);
@@ -501,12 +628,14 @@ RULES:
 
 OUTPUT (return ONLY this JSON, no markdown):
 {
+  "summary": "2-3 sentence professional summary synthesized from the resume. Mention total years of experience, key domains, and strongest value proposition.",
   "master_experiences": [
     {"company": "...", "role": "...", "dates": "...", "bullets": ["...", "..."]}
   ],
   "education": [
     {"institution": "...", "degree": "...", "field": "...", "dates": "..."}
-  ]
+  ],
+  "skills": ["Skill 1", "Skill 2", "Skill 3"]
 }`;
       const userPrompt = `EXTRACTED RESUME TEXT:\n${extractData.text}\n\nTransform this into a master resume. Return ONLY the JSON.`;
       const text = await callClaude(systemPrompt, userPrompt, 4000);
@@ -548,6 +677,44 @@ OUTPUT (return ONLY this JSON, no markdown):
       if (data.error) throw new Error(data.error);
       const rewritten = data.text.replace(/^["•\-\s]+/, '').replace(/["]+$/, '').trim();
       updateBullet(expIdx, bIdx, rewritten);
+      setRefineKey(null);
+      setRefinePrompt('');
+    } catch (err) {
+      // silently fail — user can retry
+    } finally {
+      setIsRefining(false);
+    }
+  };
+
+  const updateTailoredBullet = (expIdx, bIdx, newText) => {
+    setResult(prev => ({
+      ...prev,
+      tailored_experiences: prev.tailored_experiences.map((exp, ei) =>
+        ei !== expIdx ? exp : {
+          ...exp,
+          bullets: exp.bullets.map((b, bi) => bi === bIdx ? newText : b)
+        }
+      )
+    }));
+  };
+
+  const refineTailoredBullet = async (expIdx, bIdx, bullet) => {
+    if (!refinePrompt.trim()) return;
+    setIsRefining(true);
+    try {
+      const response = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemPrompt: 'You are a resume bullet rewriter. Rewrite the given bullet per the user\'s instruction. Keep it truthful — do not invent new facts, metrics, or tools not present in the original. Return ONLY the rewritten bullet text, single line, no markdown, no preamble.',
+          userPrompt: `Original bullet: "${bullet}"\n\nInstruction: ${refinePrompt}\n\nRewrite it.`,
+          maxTokens: 200,
+        }),
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+      const rewritten = data.text.replace(/^["•\-\s]+/, '').replace(/["]+$/, '').trim();
+      updateTailoredBullet(expIdx, bIdx, rewritten);
       setRefineKey(null);
       setRefinePrompt('');
     } catch (err) {
@@ -626,6 +793,13 @@ OUTPUT (return ONLY this JSON, no markdown):
   };
 
   const busy = isGenerating || isApplying;
+
+  const tailoredDisplay = result ? {
+    master_experiences: result.tailored_experiences,
+    summary: result.summary ?? '',
+    education: result.education ?? [],
+    skills: result.skills ?? [],
+  } : null;
 
   return (
     <div className="min-h-screen bg-stone-50" style={{ fontFamily: '"Inter", system-ui, sans-serif' }}>
@@ -727,6 +901,32 @@ OUTPUT (return ONLY this JSON, no markdown):
                   ? "Just tell your story the way you'd explain it to a friend. No structure needed — narrate what you worked on, what problems you solved, what changed because of you."
                   : "Upload your existing resume PDF. We'll extract the content and restructure it into sharp, ATS-ready bullets framed for your target archetype."}
               </p>
+            </div>
+
+            {/* Personal Details */}
+            <div className="bg-white rounded-xl border border-stone-200 p-5 mb-5">
+              <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-4">Your Details</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {[
+                  { key: 'name', label: 'Full Name', placeholder: 'Jane Smith' },
+                  { key: 'title', label: 'Title / Profession', placeholder: 'Senior Product Manager' },
+                  { key: 'email', label: 'Email', placeholder: 'jane@example.com' },
+                  { key: 'phone', label: 'Phone', placeholder: '(123) 456-7890' },
+                  { key: 'location', label: 'Location', placeholder: 'San Francisco, CA' },
+                  { key: 'linkedin', label: 'LinkedIn', placeholder: 'linkedin.com/in/jane' },
+                ].map(({ key, label, placeholder }) => (
+                  <div key={key}>
+                    <label className="block text-xs text-stone-500 mb-1">{label}</label>
+                    <input
+                      type="text"
+                      value={personalInfo[key]}
+                      onChange={e => setPersonalInfo(p => ({ ...p, [key]: e.target.value }))}
+                      placeholder={placeholder}
+                      className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-stone-400 text-stone-800 placeholder-stone-300"
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Toggle */}
@@ -864,18 +1064,35 @@ OUTPUT (return ONLY this JSON, no markdown):
 
             {masterResult && (
               <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
-                <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between">
+
+                {/* Action bar */}
+                <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between flex-wrap gap-3">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span className="text-sm font-semibold text-stone-900">Master Resume Built</span>
+                    <span className="text-sm font-semibold text-stone-900">Master Resume</span>
                     <span className="text-xs text-stone-400">· {masterResult.master_experiences.length} roles</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    {/* Template switcher */}
+                    <div className="flex gap-0.5 p-1 bg-stone-100 rounded-lg">
+                      <button
+                        onClick={() => setSelectedTemplate('template1')}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${selectedTemplate === 'template1' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                      >
+                        Template 1
+                      </button>
+                      <button
+                        onClick={() => setSelectedTemplate('template2')}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${selectedTemplate === 'template2' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                      >
+                        Template 2
+                      </button>
+                    </div>
                     <button
-                      onClick={() => exportToPDF(masterResult.master_experiences, masterResult.education, 'Master Resume')}
+                      onClick={() => selectedTemplate === 'template1' ? exportToPDF(masterResult, personalInfo) : exportToPDFTemplate2(masterResult, personalInfo)}
                       className="px-3 py-2 text-xs font-medium text-stone-700 border border-stone-200 hover:bg-stone-50 rounded-lg flex items-center gap-1.5 transition-colors"
                     >
-                      <Download className="w-3.5 h-3.5" /> Export PDF
+                      <Download className="w-3.5 h-3.5" /> Download PDF
                     </button>
                     <button
                       onClick={useForTailoring}
@@ -885,23 +1102,68 @@ OUTPUT (return ONLY this JSON, no markdown):
                     </button>
                   </div>
                 </div>
-                <div className="divide-y divide-stone-100">
-                  {masterResult.master_experiences.map((exp, expIdx) => (
-                    <div key={expIdx} className="p-6">
-                      <div className="flex items-baseline justify-between mb-1">
-                        <h4 className="font-semibold" style={{ color: '#1F4E79' }}>{exp.company}</h4>
-                        <span className="text-xs text-stone-500 italic">{exp.dates}</span>
-                      </div>
-                      <p className="text-sm italic mb-4" style={{ color: '#1F4E79' }}>{exp.role}</p>
-                      <ul className="space-y-3">
-                        {exp.bullets.map((b, bIdx) => {
+
+                {/* Template preview */}
+                <div style={{ fontFamily: 'Calibri, Arial, sans-serif' }}>
+                {selectedTemplate === 'template1' && (
+                <div className="px-10 py-8">
+
+                  {/* Header */}
+                  <div className="text-3xl font-bold text-stone-900 leading-tight">{personalInfo.name || 'Your Name'}</div>
+                  <div className="text-sm text-stone-500 mt-0.5 mb-1">{personalInfo.title || 'Your Title / Profession'}</div>
+                  <div className="text-xs text-stone-500 text-center py-1">
+                    {[personalInfo.email, personalInfo.phone, personalInfo.location, personalInfo.linkedin].filter(Boolean).join(' | ') || 'email@example.com | (123) 456-7890 | City, Country | linkedin.com/in/yourname'}
+                  </div>
+                  <div className="border-t-2 mt-2 mb-4" style={{ borderColor: '#1F4E79' }} />
+
+                  {/* Professional Summary */}
+                  {masterResult.summary && (
+                    <div className="mb-4">
+                      <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Professional Summary</div>
+                      <div className="border-t mb-2" style={{ borderColor: '#1F4E79' }} />
+                      {editingKey === 'summary' ? (
+                        <textarea
+                          autoFocus
+                          defaultValue={masterResult.summary}
+                          onBlur={e => {
+                            const v = e.target.value.trim();
+                            if (v) setMasterResult(prev => ({ ...prev, summary: v }));
+                            setEditingKey(null);
+                          }}
+                          onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                          rows={3}
+                          className="w-full text-sm border border-stone-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none leading-relaxed text-stone-700"
+                        />
+                      ) : (
+                        <div className="flex items-start gap-2">
+                          <p className="flex-1 text-sm text-stone-700 leading-relaxed">{masterResult.summary}</p>
+                          <button onClick={() => setEditingKey('summary')} className="flex-shrink-0 p-1 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit summary">
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Work Experience */}
+                  <div className="mb-4">
+                    <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Work Experience</div>
+                    <div className="border-t mb-3" style={{ borderColor: '#1F4E79' }} />
+                    {masterResult.master_experiences.map((exp, expIdx) => (
+                      <div key={expIdx} className="mb-4">
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-sm font-bold text-stone-900">{exp.role} | {exp.company}</span>
+                          <span className="text-xs text-stone-500 ml-2 flex-shrink-0">{exp.dates}</span>
+                        </div>
+                        <ul className="mt-1 space-y-1.5">
+                          {exp.bullets.map((b, bIdx) => {
                           const key = `${expIdx}-${bIdx}`;
                           const isEditing = editingKey === key;
                           const isRefineOpen = refineKey === key;
                           return (
-                            <li key={bIdx} className="group">
-                              <div className="flex items-start gap-3 text-sm text-stone-800 leading-relaxed">
-                                <span className="text-stone-400 mt-0.5 flex-shrink-0">•</span>
+                            <li key={bIdx}>
+                              <div className="flex items-start gap-2 text-sm text-stone-800 leading-relaxed">
+                                <span className="text-stone-400 flex-shrink-0 mt-0.5">•</span>
                                 {isEditing ? (
                                   <textarea
                                     autoFocus
@@ -911,32 +1173,28 @@ OUTPUT (return ONLY this JSON, no markdown):
                                       if (editingText.trim()) updateBullet(expIdx, bIdx, editingText.trim());
                                       setEditingKey(null);
                                     }}
-                                    onKeyDown={e => {
-                                      if (e.key === 'Escape') setEditingKey(null);
-                                    }}
-                                    rows={3}
-                                    className="flex-1 text-sm text-stone-800 leading-relaxed border border-stone-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
+                                    onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                                    rows={2}
+                                    className="flex-1 text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
                                   />
                                 ) : (
                                   <span className="flex-1">{b}</span>
                                 )}
                                 {!isEditing && (
-                                  <div className="flex items-center gap-1.5 flex-shrink-0 ml-1">
+                                  <div className="flex items-center gap-1 flex-shrink-0">
                                     <button
-                                      title="Edit manually"
                                       onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
-                                      className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors"
+                                      className="p-1 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors"
+                                      title="Edit manually"
                                     >
                                       <Pencil className="w-3 h-3" />
-                                      Edit
                                     </button>
                                     <button
-                                      title="Rewrite this bullet with AI"
                                       onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }}
-                                      className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors ${isRefineOpen ? 'bg-stone-200 text-stone-700' : 'text-stone-400 hover:bg-stone-100 hover:text-stone-600'}`}
+                                      className={`p-1 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`}
+                                      title="Refine with AI"
                                     >
                                       <Sparkles className="w-3 h-3" />
-                                      Refine with AI
                                     </button>
                                   </div>
                                 )}
@@ -983,24 +1241,355 @@ OUTPUT (return ONLY this JSON, no markdown):
                   ))}
                 </div>
 
-                {masterResult.education?.length > 0 && (
-                  <div className="border-t border-stone-200">
-                    <div className="px-6 py-3 bg-stone-50 border-b border-stone-100">
-                      <span className="text-xs font-semibold text-stone-500 uppercase tracking-wider">Education</span>
-                    </div>
-                    <div className="divide-y divide-stone-100">
-                      {masterResult.education.map((edu, i) => (
-                        <div key={i} className="px-6 py-4 flex items-baseline justify-between">
-                          <div>
-                            <h4 className="font-semibold text-sm text-stone-900">{edu.institution}</h4>
-                            <p className="text-sm text-stone-500 mt-0.5">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</p>
+                  {/* Education — inline editable */}
+                  {masterResult.education?.length > 0 && (
+                    <div className="mb-4">
+                      <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Education</div>
+                      <div className="border-t mb-3" style={{ borderColor: '#1F4E79' }} />
+                      {masterResult.education.map((edu, i) => {
+                        const eKey = `edu-${i}`;
+                        const isEditingEdu = editingKey === eKey;
+                        return (
+                          <div key={i} className="mb-3 group flex items-start gap-2">
+                            {isEditingEdu ? (
+                              <div className="flex-1 grid grid-cols-2 gap-2">
+                                <input autoFocus defaultValue={`${edu.degree}${edu.field ? `, ${edu.field}` : ''}`}
+                                  placeholder="Degree, Field"
+                                  onBlur={e => setMasterResult(prev => {
+                                    const ed = [...prev.education];
+                                    const parts = e.target.value.split(',').map(s => s.trim());
+                                    ed[i] = { ...ed[i], degree: parts[0] || '', field: parts.slice(1).join(', ') || '' };
+                                    return { ...prev, education: ed };
+                                  })}
+                                  className="col-span-2 text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                                />
+                                <input defaultValue={edu.institution} placeholder="Institution"
+                                  onBlur={e => setMasterResult(prev => {
+                                    const ed = [...prev.education]; ed[i] = { ...ed[i], institution: e.target.value };
+                                    return { ...prev, education: ed };
+                                  })}
+                                  onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') setEditingKey(null); }}
+                                  className="text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                                />
+                                <input defaultValue={edu.dates} placeholder="Dates"
+                                  onBlur={e => { setMasterResult(prev => { const ed = [...prev.education]; ed[i] = { ...ed[i], dates: e.target.value }; return { ...prev, education: ed }; }); setEditingKey(null); }}
+                                  onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') setEditingKey(null); }}
+                                  className="text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                                />
+                              </div>
+                            ) : (
+                              <div className="flex-1">
+                                <div className="flex items-baseline justify-between">
+                                  <span className="text-sm font-bold text-stone-900">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</span>
+                                  <span className="text-xs text-stone-500 ml-2 flex-shrink-0">{edu.dates}</span>
+                                </div>
+                                <div className="text-sm text-stone-500 mt-0.5">{edu.institution}</div>
+                              </div>
+                            )}
+                            {!isEditingEdu && (
+                              <button onClick={() => setEditingKey(eKey)} className="flex-shrink-0 p-1 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors opacity-0 group-hover:opacity-100" title="Edit">
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            )}
                           </div>
-                          {edu.dates && <span className="text-xs text-stone-400 italic ml-4 flex-shrink-0">{edu.dates}</span>}
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Skills — editable chips */}
+                  <div className="mb-2">
+                    <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Skills</div>
+                    <div className="border-t mb-2" style={{ borderColor: '#1F4E79' }} />
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      {(masterResult.skills ?? []).map((skill, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-stone-100 rounded text-xs text-stone-700 group">
+                          {skill}
+                          <button onClick={() => setMasterResult(prev => ({ ...prev, skills: prev.skills.filter((_, si) => si !== i) }))}
+                            className="text-stone-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                            <X className="w-2.5 h-2.5" />
+                          </button>
+                        </span>
+                      ))}
+                      <input
+                        value={newSkill}
+                        onChange={e => setNewSkill(e.target.value)}
+                        onKeyDown={e => {
+                          if ((e.key === 'Enter' || e.key === ',') && newSkill.trim()) {
+                            e.preventDefault();
+                            setMasterResult(prev => ({ ...prev, skills: [...(prev.skills ?? []), newSkill.trim()] }));
+                            setNewSkill('');
+                          }
+                          if (e.key === 'Escape') setNewSkill('');
+                        }}
+                        placeholder="+ Add skill"
+                        className="text-xs border border-dashed border-stone-300 rounded px-2 py-0.5 focus:outline-none focus:border-stone-500 w-24 text-stone-500 placeholder-stone-300"
+                      />
+                    </div>
+                  </div>
+
+                </div>
+                )}{/* end template1 */}
+
+                {/* ── TEMPLATE 2: Two-column layout ── */}
+                {selectedTemplate === 'template2' && (
+                <div className="px-8 py-7">
+
+                  {/* T2 Header */}
+                  <div className="mb-4">
+                    <div className="font-black text-stone-900 uppercase tracking-tight" style={{ fontSize: '1.9rem', lineHeight: 1.1 }}>
+                      {personalInfo.name || 'YOUR NAME'}
+                    </div>
+                    <div className="text-sm font-semibold mt-1 mb-2" style={{ color: '#1F4E79' }}>
+                      {personalInfo.title || 'Your Professional Title'}
+                    </div>
+                    <div className="flex flex-wrap gap-4 text-xs text-stone-600">
+                      {personalInfo.phone ? <span>{personalInfo.phone}</span> : null}
+                      {personalInfo.email ? <span>{personalInfo.email}</span> : null}
+                      {personalInfo.linkedin ? <span>{personalInfo.linkedin}</span> : null}
+                      {personalInfo.location ? <span>{personalInfo.location}</span> : null}
+                      {!personalInfo.phone && !personalInfo.email && !personalInfo.linkedin && !personalInfo.location && (
+                        <span className="text-stone-400">000-000-0000 · you@email.com · LinkedIn · City, State</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="border-b border-stone-300 mb-4" />
+
+                  {/* T2 Two-column body */}
+                  <div className="flex gap-7">
+
+                    {/* LEFT: Experience */}
+                    <div style={{ flex: '0 0 54%' }}>
+                      <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Experience</div>
+                      <div className="border-t mb-3 border-stone-800" />
+                      {masterResult.master_experiences.map((exp, expIdx) => (
+                        <div key={expIdx} className="mb-4">
+                          <div className="text-sm font-bold text-stone-900">{exp.role}</div>
+                          <div className="text-xs font-semibold" style={{ color: '#1F4E79' }}>{exp.company}</div>
+                          <div className="text-xs text-stone-500 mb-1.5">{exp.dates}</div>
+                          <ul className="space-y-1">
+                            {exp.bullets.map((b, bIdx) => {
+                              const key = `${expIdx}-${bIdx}`;
+                              const isEditing = editingKey === key;
+                              const isRefineOpen = refineKey === key;
+                              return (
+                                <li key={bIdx}>
+                                  <div className="flex items-start gap-1.5 text-xs text-stone-800 leading-relaxed">
+                                    <span className="text-stone-400 flex-shrink-0 mt-0.5">•</span>
+                                    {isEditing ? (
+                                      <textarea
+                                        autoFocus
+                                        value={editingText}
+                                        onChange={e => setEditingText(e.target.value)}
+                                        onBlur={() => {
+                                          if (editingText.trim()) updateBullet(expIdx, bIdx, editingText.trim());
+                                          setEditingKey(null);
+                                        }}
+                                        onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                                        rows={2}
+                                        className="flex-1 text-xs border border-stone-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
+                                      />
+                                    ) : (
+                                      <span className="flex-1">{b}</span>
+                                    )}
+                                    {!isEditing && (
+                                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                                        <button
+                                          onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
+                                          className="p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors"
+                                          title="Edit manually"
+                                        >
+                                          <Pencil className="w-2.5 h-2.5" />
+                                        </button>
+                                        <button
+                                          onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }}
+                                          className={`p-0.5 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`}
+                                          title="Refine with AI"
+                                        >
+                                          <Sparkles className="w-2.5 h-2.5" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {isRefineOpen && (
+                                    <div className="mt-1.5 ml-4 p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                                      <p className="text-xs text-amber-700 font-medium mb-1.5">What should change?</p>
+                                      <div className="flex gap-1.5 items-center">
+                                        <input
+                                          autoFocus
+                                          type="text"
+                                          value={refinePrompt}
+                                          onChange={e => setRefinePrompt(e.target.value)}
+                                          onKeyDown={e => {
+                                            if (e.key === 'Enter') refineBullet(expIdx, bIdx, b);
+                                            if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); }
+                                          }}
+                                          placeholder="e.g. more impact, stronger verb…"
+                                          className="flex-1 text-xs border border-amber-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
+                                        />
+                                        <button
+                                          onClick={() => refineBullet(expIdx, bIdx, b)}
+                                          disabled={isRefining || !refinePrompt.trim()}
+                                          className="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors whitespace-nowrap"
+                                        >
+                                          {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                                          Rewrite
+                                        </button>
+                                        <button
+                                          onClick={() => { setRefineKey(null); setRefinePrompt(''); }}
+                                          className="p-1.5 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors"
+                                        >
+                                          <X className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+
+                    {/* RIGHT: Summary, Education, Key Achievements, Skills */}
+                    <div style={{ flex: 1 }}>
+
+                      {/* T2 Summary */}
+                      {masterResult.summary && (
+                        <div className="mb-4">
+                          <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Summary</div>
+                          <div className="border-t mb-2 border-stone-800" />
+                          {editingKey === 'summary' ? (
+                            <textarea
+                              autoFocus
+                              defaultValue={masterResult.summary}
+                              onBlur={e => {
+                                const v = e.target.value.trim();
+                                if (v) setMasterResult(prev => ({ ...prev, summary: v }));
+                                setEditingKey(null);
+                              }}
+                              onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                              rows={4}
+                              className="w-full text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none leading-relaxed text-stone-700"
+                            />
+                          ) : (
+                            <div className="flex items-start gap-1.5">
+                              <p className="flex-1 text-xs text-stone-700 leading-relaxed">{masterResult.summary}</p>
+                              <button onClick={() => setEditingKey('summary')} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit">
+                                <Pencil className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* T2 Education */}
+                      {masterResult.education?.length > 0 && (
+                        <div className="mb-4">
+                          <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Education</div>
+                          <div className="border-t mb-2 border-stone-800" />
+                          {masterResult.education.map((edu, i) => {
+                            const eKey = `edu-${i}`;
+                            const isEditingEdu = editingKey === eKey;
+                            return (
+                              <div key={i} className="mb-2 group flex items-start gap-1.5">
+                                {isEditingEdu ? (
+                                  <div className="flex-1 grid grid-cols-1 gap-1.5">
+                                    <input autoFocus defaultValue={`${edu.degree}${edu.field ? `, ${edu.field}` : ''}`}
+                                      placeholder="Degree, Field"
+                                      onBlur={e => setMasterResult(prev => {
+                                        const ed = [...prev.education];
+                                        const parts = e.target.value.split(',').map(s => s.trim());
+                                        ed[i] = { ...ed[i], degree: parts[0] || '', field: parts.slice(1).join(', ') || '' };
+                                        return { ...prev, education: ed };
+                                      })}
+                                      className="text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                                    />
+                                    <input defaultValue={edu.institution} placeholder="Institution"
+                                      onBlur={e => setMasterResult(prev => {
+                                        const ed = [...prev.education]; ed[i] = { ...ed[i], institution: e.target.value };
+                                        return { ...prev, education: ed };
+                                      })}
+                                      onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') setEditingKey(null); }}
+                                      className="text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                                    />
+                                    <input defaultValue={edu.dates} placeholder="Dates"
+                                      onBlur={e => { setMasterResult(prev => { const ed = [...prev.education]; ed[i] = { ...ed[i], dates: e.target.value }; return { ...prev, education: ed }; }); setEditingKey(null); }}
+                                      onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') setEditingKey(null); }}
+                                      className="text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="flex-1">
+                                    <div className="text-xs font-bold text-stone-900">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</div>
+                                    <div className="text-xs font-semibold" style={{ color: '#1F4E79' }}>{edu.institution}</div>
+                                    <div className="text-xs text-stone-500 mt-0.5">{edu.dates}</div>
+                                  </div>
+                                )}
+                                {!isEditingEdu && (
+                                  <button onClick={() => setEditingKey(eKey)} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors opacity-0 group-hover:opacity-100" title="Edit">
+                                    <Pencil className="w-2.5 h-2.5" />
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* T2 Key Achievements — auto from top 2 roles' first bullets */}
+                      {masterResult.master_experiences?.length > 0 && masterResult.master_experiences[0]?.bullets?.length > 0 && (
+                        <div className="mb-4">
+                          <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Key Achievements</div>
+                          <div className="border-t mb-2 border-stone-800" />
+                          {masterResult.master_experiences.slice(0, 2).map((exp, i) => exp.bullets[0] && (
+                            <div key={i} className="mb-2">
+                              <div className="text-xs font-bold text-stone-900">{exp.company}</div>
+                              <div className="text-xs text-stone-600 leading-relaxed mt-0.5">{exp.bullets[0]}</div>
+                            </div>
+                          ))}
+                          <p className="text-xs text-stone-400 italic mt-1">Mirrors top bullet per role · edit bullets to update</p>
+                        </div>
+                      )}
+
+                      {/* T2 Skills — same editable chips */}
+                      <div className="mb-2">
+                        <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Skills</div>
+                        <div className="border-t mb-2 border-stone-800" />
+                        <div className="flex flex-wrap gap-1 items-center">
+                          {(masterResult.skills ?? []).map((skill, i) => (
+                            <span key={i} className="inline-flex items-center gap-0.5 text-xs text-stone-700 group mr-1.5">
+                              {skill}
+                              <button onClick={() => setMasterResult(prev => ({ ...prev, skills: prev.skills.filter((_, si) => si !== i) }))}
+                                className="text-stone-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                                <X className="w-2 h-2" />
+                              </button>
+                            </span>
+                          ))}
+                          <input
+                            value={newSkill}
+                            onChange={e => setNewSkill(e.target.value)}
+                            onKeyDown={e => {
+                              if ((e.key === 'Enter' || e.key === ',') && newSkill.trim()) {
+                                e.preventDefault();
+                                setMasterResult(prev => ({ ...prev, skills: [...(prev.skills ?? []), newSkill.trim()] }));
+                                setNewSkill('');
+                              }
+                              if (e.key === 'Escape') setNewSkill('');
+                            }}
+                            placeholder="+ Add skill"
+                            className="text-xs border border-dashed border-stone-300 rounded px-1.5 py-0.5 focus:outline-none focus:border-stone-500 w-20 text-stone-500 placeholder-stone-300"
+                          />
+                        </div>
+                      </div>
+
+                    </div>{/* end right col */}
+                  </div>{/* end two-col */}
+                </div>
+                )}{/* end template2 */}
+
+                </div>{/* end template preview outer */}
 
                 <div className="border-t border-stone-200 px-6 py-5 bg-stone-50">
                   <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-3">Rewrite entire resume with AI</p>
@@ -1047,6 +1636,15 @@ OUTPUT (return ONLY this JSON, no markdown):
             <div className="px-5 py-3 border-b border-stone-200 flex items-center gap-2">
               <Briefcase className="w-4 h-4 text-stone-500" />
               <h3 className="text-sm font-semibold text-stone-900">Master Resume</h3>
+              {masterResult && (
+                <button
+                  onClick={() => setMasterResume(masterResultToPlainText(masterResult))}
+                  className="ml-1 px-2 py-0.5 text-xs font-medium text-stone-600 border border-stone-200 hover:bg-stone-50 rounded-md transition-colors flex items-center gap-1"
+                  title="Pre-fill from your built master resume"
+                >
+                  <FileText className="w-3 h-3" /> Use master resume
+                </button>
+              )}
               <span className="text-xs text-stone-400 ml-auto">{masterResume.length} chars</span>
             </div>
             <textarea
@@ -1235,43 +1833,471 @@ OUTPUT (return ONLY this JSON, no markdown):
                       </div>
                     </div>
                   )}
-                  <div className="px-6 py-3 border-b border-stone-100 flex items-center justify-end gap-2">
-                    <button
-                      onClick={() => exportToPDF(result.tailored_experiences, [], 'Tailored Resume')}
-                      className="px-3 py-1.5 text-xs font-medium text-stone-700 border border-stone-200 hover:bg-stone-50 rounded-md flex items-center gap-1.5 transition-colors"
-                    >
-                      <Download className="w-3.5 h-3.5" /> Export PDF
-                    </button>
-                    <button onClick={copyAll} className="px-3 py-1.5 text-xs font-medium text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-md flex items-center gap-1.5 transition-colors">
-                      {copiedIdx === 'all' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                      {copiedIdx === 'all' ? 'Copied' : 'Copy all'}
-                    </button>
+                  <div className="px-6 py-3 border-b border-stone-100 flex items-center justify-between gap-2 flex-wrap">
+                    {/* Template switcher */}
+                    <div className="flex gap-0.5 p-1 bg-stone-100 rounded-lg">
+                      <button onClick={() => setSelectedTailoredTemplate('template1')}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${selectedTailoredTemplate === 'template1' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>
+                        Template 1
+                      </button>
+                      <button onClick={() => setSelectedTailoredTemplate('template2')}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${selectedTailoredTemplate === 'template2' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>
+                        Template 2
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => selectedTailoredTemplate === 'template1' ? exportToPDF(tailoredDisplay, personalInfo) : exportToPDFTemplate2(tailoredDisplay, personalInfo)}
+                        className="px-3 py-1.5 text-xs font-medium text-stone-700 border border-stone-200 hover:bg-stone-50 rounded-md flex items-center gap-1.5 transition-colors"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Download PDF
+                      </button>
+                      <button onClick={copyAll} className="px-3 py-1.5 text-xs font-medium text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-md flex items-center gap-1.5 transition-colors">
+                        {copiedIdx === 'all' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedIdx === 'all' ? 'Copied' : 'Copy all'}
+                      </button>
+                    </div>
                   </div>
-                  <div className="divide-y divide-stone-100">
-                    {result.tailored_experiences?.map((exp, expIdx) => (
-                      <div key={expIdx} className="p-6">
-                        <div className="flex items-baseline justify-between mb-1">
-                          <h4 className="font-semibold" style={{ color: '#1F4E79' }}>{exp.company}</h4>
-                          <span className="text-xs text-stone-500 italic">{exp.dates}</span>
-                        </div>
-                        <p className="text-sm italic mb-4" style={{ color: '#1F4E79' }}>{exp.role}</p>
-                        <ul className="space-y-2.5">
-                          {exp.bullets?.map((b, bIdx) => {
-                            const key = `${expIdx}-${bIdx}`;
-                            return (
-                              <li key={bIdx} className="bullet-card group flex items-start gap-3 text-sm text-stone-800 leading-relaxed">
-                                <span className="text-stone-400 mt-0.5">•</span>
-                                <span className="flex-1">{b}</span>
-                                <button onClick={() => copyBullet(b, key)} className="copy-btn opacity-0 transition-opacity flex-shrink-0 p-1 hover:bg-stone-100 rounded">
-                                  {copiedIdx === key ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5 text-stone-400" />}
-                                </button>
-                              </li>
-                            );
-                          })}
-                        </ul>
+
+                  {/* Template preview */}
+                  <div style={{ fontFamily: 'Calibri, Arial, sans-serif' }}>
+
+                  {selectedTailoredTemplate === 'template1' && (
+                  <div className="px-10 py-8">
+                    {/* T1 Header */}
+                    <div className="mb-1">
+                      <div className="font-bold text-stone-900" style={{ fontSize: '1.35rem' }}>
+                        {personalInfo.name || 'YOUR NAME'}
                       </div>
-                    ))}
+                      {personalInfo.title && <div className="text-sm" style={{ color: '#1F4E79' }}>{personalInfo.title}</div>}
+                    </div>
+                    <div className="text-xs text-stone-500 mb-1 flex flex-wrap gap-3">
+                      {[personalInfo.email, personalInfo.phone, personalInfo.location, personalInfo.linkedin].filter(Boolean).map((c, i) => (
+                        <span key={i}>{c}</span>
+                      ))}
+                      {!personalInfo.email && !personalInfo.phone && !personalInfo.location && !personalInfo.linkedin && (
+                        <span className="text-stone-400">email · phone · location</span>
+                      )}
+                    </div>
+                    <div className="border-t-2 border-stone-900 mb-4" />
+
+                    {/* T1 Summary */}
+                    <div className="mb-4">
+                      <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Professional Summary</div>
+                      <div className="border-t mb-2" style={{ borderColor: '#1F4E79' }} />
+                      {editingKey === 't-summary' ? (
+                        <textarea
+                          autoFocus
+                          defaultValue={tailoredDisplay.summary}
+                          onBlur={e => { const v = e.target.value.trim(); if (v) setResult(prev => ({ ...prev, summary: v })); setEditingKey(null); }}
+                          onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                          rows={4}
+                          className="w-full text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none leading-relaxed text-stone-700"
+                        />
+                      ) : (
+                        <div className="flex items-start gap-1.5">
+                          <p className="flex-1 text-xs text-stone-700 leading-relaxed">{tailoredDisplay.summary || <span className="text-stone-400 italic">No summary</span>}</p>
+                          <button onClick={() => setEditingKey('t-summary')} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit">
+                            <Pencil className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* T1 Experience */}
+                    <div className="mb-4">
+                      <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Work Experience</div>
+                      <div className="border-t mb-3" style={{ borderColor: '#1F4E79' }} />
+                      {tailoredDisplay.master_experiences.map((exp, expIdx) => (
+                        <div key={expIdx} className="mb-4">
+                          <div className="flex items-baseline justify-between">
+                            <div className="text-sm font-bold text-stone-900">{exp.role} | {exp.company}</div>
+                            <div className="text-xs text-stone-500 ml-2 whitespace-nowrap">{exp.dates}</div>
+                          </div>
+                          <ul className="mt-1.5 space-y-1">
+                            {exp.bullets.map((b, bIdx) => {
+                              const key = `t-${expIdx}-${bIdx}`;
+                              const isEditing = editingKey === key;
+                              const isRefineOpen = refineKey === key;
+                              return (
+                                <li key={bIdx}>
+                                  <div className="flex items-start gap-2 text-sm text-stone-800 leading-relaxed">
+                                    <span className="text-stone-400 flex-shrink-0 mt-0.5">•</span>
+                                    {isEditing ? (
+                                      <textarea
+                                        autoFocus
+                                        value={editingText}
+                                        onChange={e => setEditingText(e.target.value)}
+                                        onBlur={() => {
+                                          if (editingText.trim()) updateTailoredBullet(expIdx, bIdx, editingText.trim());
+                                          setEditingKey(null);
+                                        }}
+                                        onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                                        rows={2}
+                                        className="flex-1 text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
+                                      />
+                                    ) : (
+                                      <span className="flex-1">{b}</span>
+                                    )}
+                                    {!isEditing && (
+                                      <div className="flex items-center gap-1 flex-shrink-0">
+                                        <button
+                                          onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
+                                          className="p-1 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors"
+                                          title="Edit manually"
+                                        >
+                                          <Pencil className="w-3 h-3" />
+                                        </button>
+                                        <button
+                                          onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }}
+                                          className={`p-1 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`}
+                                          title="Refine with AI"
+                                        >
+                                          <Sparkles className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {isRefineOpen && (
+                                    <div className="mt-2 ml-5 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                                      <p className="text-xs text-amber-700 font-medium mb-2">What should change about this bullet?</p>
+                                      <div className="flex gap-2 items-center">
+                                        <input
+                                          autoFocus
+                                          type="text"
+                                          value={refinePrompt}
+                                          onChange={e => setRefinePrompt(e.target.value)}
+                                          onKeyDown={e => {
+                                            if (e.key === 'Enter') refineTailoredBullet(expIdx, bIdx, b);
+                                            if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); }
+                                          }}
+                                          placeholder="e.g. emphasize leadership, add more scope, make it punchier…"
+                                          className="flex-1 text-sm border border-amber-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
+                                        />
+                                        <button
+                                          onClick={() => refineTailoredBullet(expIdx, bIdx, b)}
+                                          disabled={isRefining || !refinePrompt.trim()}
+                                          className="px-3 py-2 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                                        >
+                                          {isRefining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                                          Rewrite
+                                        </button>
+                                        <button
+                                          onClick={() => { setRefineKey(null); setRefinePrompt(''); }}
+                                          className="p-2 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors"
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* T1 Education */}
+                    {tailoredDisplay.education?.length > 0 && (
+                      <div className="mb-4">
+                        <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Education</div>
+                        <div className="border-t mb-3" style={{ borderColor: '#1F4E79' }} />
+                        {tailoredDisplay.education.map((edu, i) => (
+                          <div key={i} className="mb-2">
+                            <div className="flex items-baseline justify-between">
+                              <div className="text-sm font-bold text-stone-900">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</div>
+                              <div className="text-xs text-stone-500">{edu.dates}</div>
+                            </div>
+                            <div className="text-xs" style={{ color: '#1F4E79' }}>{edu.institution}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* T1 Skills */}
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Skills</div>
+                      <div className="border-t mb-2" style={{ borderColor: '#1F4E79' }} />
+                      <div className="flex flex-wrap gap-1 items-center">
+                        {(tailoredDisplay.skills ?? []).map((skill, i) => (
+                          <span key={i} className="inline-flex items-center gap-0.5 text-xs text-stone-700 group mr-1.5">
+                            {skill}
+                            <button onClick={() => setResult(prev => ({ ...prev, skills: prev.skills.filter((_, si) => si !== i) }))}
+                              className="text-stone-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                              <X className="w-2 h-2" />
+                            </button>
+                          </span>
+                        ))}
+                        <input
+                          value={tailoredNewSkill}
+                          onChange={e => setTailoredNewSkill(e.target.value)}
+                          onKeyDown={e => {
+                            if ((e.key === 'Enter' || e.key === ',') && tailoredNewSkill.trim()) {
+                              e.preventDefault();
+                              setResult(prev => ({ ...prev, skills: [...(prev.skills ?? []), tailoredNewSkill.trim()] }));
+                              setTailoredNewSkill('');
+                            }
+                            if (e.key === 'Escape') setTailoredNewSkill('');
+                          }}
+                          placeholder="+ Add skill"
+                          className="text-xs border border-dashed border-stone-300 rounded px-1.5 py-0.5 focus:outline-none focus:border-stone-500 w-20 text-stone-500 placeholder-stone-300"
+                        />
+                      </div>
+                    </div>
                   </div>
+                  )}{/* end tailored t1 */}
+
+                  {selectedTailoredTemplate === 'template2' && (
+                  <div className="px-8 py-7">
+                    {/* T2 Header */}
+                    <div className="mb-4">
+                      <div className="font-black text-stone-900 uppercase tracking-tight" style={{ fontSize: '1.9rem', lineHeight: 1.1 }}>
+                        {personalInfo.name || 'YOUR NAME'}
+                      </div>
+                      <div className="text-sm font-semibold mt-1 mb-2" style={{ color: '#1F4E79' }}>
+                        {personalInfo.title || 'Your Professional Title'}
+                      </div>
+                      <div className="flex flex-wrap gap-4 text-xs text-stone-600">
+                        {personalInfo.phone ? <span>{personalInfo.phone}</span> : null}
+                        {personalInfo.email ? <span>{personalInfo.email}</span> : null}
+                        {personalInfo.linkedin ? <span>{personalInfo.linkedin}</span> : null}
+                        {personalInfo.location ? <span>{personalInfo.location}</span> : null}
+                        {!personalInfo.phone && !personalInfo.email && !personalInfo.linkedin && !personalInfo.location && (
+                          <span className="text-stone-400">000-000-0000 · you@email.com · LinkedIn · City, State</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="border-b border-stone-300 mb-4" />
+
+                    {/* T2 Two-column body */}
+                    <div className="flex gap-7">
+                      {/* LEFT: Experience */}
+                      <div style={{ flex: '0 0 54%' }}>
+                        <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Experience</div>
+                        <div className="border-t mb-3 border-stone-800" />
+                        {tailoredDisplay.master_experiences.map((exp, expIdx) => (
+                          <div key={expIdx} className="mb-4">
+                            <div className="text-sm font-bold text-stone-900">{exp.role}</div>
+                            <div className="text-xs font-semibold" style={{ color: '#1F4E79' }}>{exp.company}</div>
+                            <div className="text-xs text-stone-500 mb-1.5">{exp.dates}</div>
+                            <ul className="space-y-1">
+                              {exp.bullets.map((b, bIdx) => {
+                                const key = `t-${expIdx}-${bIdx}`;
+                                const isEditing = editingKey === key;
+                                const isRefineOpen = refineKey === key;
+                                return (
+                                  <li key={bIdx}>
+                                    <div className="flex items-start gap-1.5 text-xs text-stone-800 leading-relaxed">
+                                      <span className="text-stone-400 flex-shrink-0 mt-0.5">•</span>
+                                      {isEditing ? (
+                                        <textarea
+                                          autoFocus
+                                          value={editingText}
+                                          onChange={e => setEditingText(e.target.value)}
+                                          onBlur={() => {
+                                            if (editingText.trim()) updateTailoredBullet(expIdx, bIdx, editingText.trim());
+                                            setEditingKey(null);
+                                          }}
+                                          onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                                          rows={2}
+                                          className="flex-1 text-xs border border-stone-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
+                                        />
+                                      ) : (
+                                        <span className="flex-1">{b}</span>
+                                      )}
+                                      {!isEditing && (
+                                        <div className="flex items-center gap-0.5 flex-shrink-0">
+                                          <button
+                                            onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
+                                            className="p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors"
+                                            title="Edit manually"
+                                          >
+                                            <Pencil className="w-2.5 h-2.5" />
+                                          </button>
+                                          <button
+                                            onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }}
+                                            className={`p-0.5 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`}
+                                            title="Refine with AI"
+                                          >
+                                            <Sparkles className="w-2.5 h-2.5" />
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                    {isRefineOpen && (
+                                      <div className="mt-1.5 ml-4 p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                                        <p className="text-xs text-amber-700 font-medium mb-1.5">What should change?</p>
+                                        <div className="flex gap-1.5 items-center">
+                                          <input
+                                            autoFocus
+                                            type="text"
+                                            value={refinePrompt}
+                                            onChange={e => setRefinePrompt(e.target.value)}
+                                            onKeyDown={e => {
+                                              if (e.key === 'Enter') refineTailoredBullet(expIdx, bIdx, b);
+                                              if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); }
+                                            }}
+                                            placeholder="e.g. more impact, stronger verb…"
+                                            className="flex-1 text-xs border border-amber-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
+                                          />
+                                          <button
+                                            onClick={() => refineTailoredBullet(expIdx, bIdx, b)}
+                                            disabled={isRefining || !refinePrompt.trim()}
+                                            className="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors whitespace-nowrap"
+                                          >
+                                            {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                                            Rewrite
+                                          </button>
+                                          <button
+                                            onClick={() => { setRefineKey(null); setRefinePrompt(''); }}
+                                            className="p-1.5 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors"
+                                          >
+                                            <X className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* RIGHT: Summary, Education, Key Achievements, Skills */}
+                      <div style={{ flex: 1 }}>
+                        <div className="mb-4">
+                          <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Summary</div>
+                          <div className="border-t mb-2 border-stone-800" />
+                          {editingKey === 't-summary' ? (
+                            <textarea
+                              autoFocus
+                              defaultValue={tailoredDisplay.summary}
+                              onBlur={e => { const v = e.target.value.trim(); if (v) setResult(prev => ({ ...prev, summary: v })); setEditingKey(null); }}
+                              onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                              rows={4}
+                              className="w-full text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none leading-relaxed text-stone-700"
+                            />
+                          ) : (
+                            <div className="flex items-start gap-1.5">
+                              <p className="flex-1 text-xs text-stone-700 leading-relaxed">{tailoredDisplay.summary || <span className="text-stone-400 italic">No summary</span>}</p>
+                              <button onClick={() => setEditingKey('t-summary')} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit">
+                                <Pencil className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        {tailoredDisplay.education?.length > 0 && (
+                          <div className="mb-4">
+                            <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Education</div>
+                            <div className="border-t mb-2 border-stone-800" />
+                            {tailoredDisplay.education.map((edu, i) => (
+                              <div key={i} className="mb-2">
+                                <div className="text-xs font-bold text-stone-900">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</div>
+                                <div className="text-xs font-semibold" style={{ color: '#1F4E79' }}>{edu.institution}</div>
+                                <div className="text-xs text-stone-500 mt-0.5">{edu.dates}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {tailoredDisplay.master_experiences?.length > 0 && tailoredDisplay.master_experiences[0]?.bullets?.length > 0 && (
+                          <div className="mb-4">
+                            <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Key Achievements</div>
+                            <div className="border-t mb-2 border-stone-800" />
+                            {tailoredDisplay.master_experiences.slice(0, 2).map((exp, i) => {
+                              if (!exp.bullets[0]) return null;
+                              const key = `t-${i}-0`;
+                              const isEditing = editingKey === key;
+                              const isRefineOpen = refineKey === key;
+                              return (
+                                <div key={i} className="mb-2">
+                                  <div className="text-xs font-bold text-stone-900">{exp.company}</div>
+                                  <div className="flex items-start gap-1.5 mt-0.5">
+                                    {isEditing ? (
+                                      <textarea
+                                        autoFocus
+                                        value={editingText}
+                                        onChange={e => setEditingText(e.target.value)}
+                                        onBlur={() => { if (editingText.trim()) updateTailoredBullet(i, 0, editingText.trim()); setEditingKey(null); }}
+                                        onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                                        rows={2}
+                                        className="flex-1 text-xs border border-stone-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
+                                      />
+                                    ) : (
+                                      <span className="flex-1 text-xs text-stone-600 leading-relaxed">{exp.bullets[0]}</span>
+                                    )}
+                                    {!isEditing && (
+                                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                                        <button onClick={() => { setEditingKey(key); setEditingText(exp.bullets[0]); setRefineKey(null); }} className="p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors" title="Edit manually">
+                                          <Pencil className="w-2.5 h-2.5" />
+                                        </button>
+                                        <button onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }} className={`p-0.5 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`} title="Refine with AI">
+                                          <Sparkles className="w-2.5 h-2.5" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {isRefineOpen && (
+                                    <div className="mt-1.5 p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                                      <p className="text-xs text-amber-700 font-medium mb-1.5">What should change?</p>
+                                      <div className="flex gap-1.5 items-center">
+                                        <input autoFocus type="text" value={refinePrompt} onChange={e => setRefinePrompt(e.target.value)}
+                                          onKeyDown={e => { if (e.key === 'Enter') refineTailoredBullet(i, 0, exp.bullets[0]); if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); } }}
+                                          placeholder="e.g. more impact, stronger verb…"
+                                          className="flex-1 text-xs border border-amber-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
+                                        />
+                                        <button onClick={() => refineTailoredBullet(i, 0, exp.bullets[0])} disabled={isRefining || !refinePrompt.trim()} className="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors whitespace-nowrap">
+                                          {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Rewrite
+                                        </button>
+                                        <button onClick={() => { setRefineKey(null); setRefinePrompt(''); }} className="p-1.5 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors">
+                                          <X className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <div className="mb-2">
+                          <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Skills</div>
+                          <div className="border-t mb-2 border-stone-800" />
+                          <div className="flex flex-wrap gap-1 items-center">
+                            {(tailoredDisplay.skills ?? []).map((skill, i) => (
+                              <span key={i} className="inline-flex items-center gap-0.5 text-xs text-stone-700 group mr-1.5">
+                                {skill}
+                                <button onClick={() => setResult(prev => ({ ...prev, skills: prev.skills.filter((_, si) => si !== i) }))}
+                                  className="text-stone-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                                  <X className="w-2 h-2" />
+                                </button>
+                              </span>
+                            ))}
+                            <input
+                              value={tailoredNewSkill}
+                              onChange={e => setTailoredNewSkill(e.target.value)}
+                              onKeyDown={e => {
+                                if ((e.key === 'Enter' || e.key === ',') && tailoredNewSkill.trim()) {
+                                  e.preventDefault();
+                                  setResult(prev => ({ ...prev, skills: [...(prev.skills ?? []), tailoredNewSkill.trim()] }));
+                                  setTailoredNewSkill('');
+                                }
+                                if (e.key === 'Escape') setTailoredNewSkill('');
+                              }}
+                              placeholder="+ Add skill"
+                              className="text-xs border border-dashed border-stone-300 rounded px-1.5 py-0.5 focus:outline-none focus:border-stone-500 w-20 text-stone-500 placeholder-stone-300"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  )}{/* end tailored t2 */}
+
+                  </div>{/* end template preview */}
                 </div>
               )}
 
