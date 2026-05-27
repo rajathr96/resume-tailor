@@ -34,6 +34,10 @@ export default function ResumeBuilderPOC() {
   // Tailor state
   const [masterResume, setMasterResume] = useState('');
   const [jobDescription, setJobDescription] = useState('');
+  const [jdInputMode, setJdInputMode] = useState('text'); // 'text' | 'url'
+  const [jdUrl, setJdUrl] = useState('');
+  const [isFetchingJd, setIsFetchingJd] = useState(false);
+  const [jdFetchError, setJdFetchError] = useState(null);
   const [archetype, setArchetype] = useState('Fintech PM');
   const [seniority, setSeniority] = useState('APM / Associate PM');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -375,6 +379,28 @@ OUTPUT (return ONLY this JSON, no markdown):
     const userPrompt = `JOB DESCRIPTION:\n${jobDescInput}\n\n---\n\nTAILORED RESUME:\n${tailoredResumeText}\n\n---\n\nAnalyze the match. Return ONLY the JSON.`;
     const text = await callClaude(systemPrompt, userPrompt, 4000);
     return JSON.parse(text);
+  };
+
+  const fetchJd = async () => {
+    if (!jdUrl.trim()) return;
+    setIsFetchingJd(true);
+    setJdFetchError(null);
+    try {
+      const res = await fetch('/api/fetch-jd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: jdUrl.trim() }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setJobDescription(data.jd_text);
+      setJdInputMode('text');
+      setJdUrl('');
+    } catch (err) {
+      setJdFetchError(err.message);
+    } finally {
+      setIsFetchingJd(false);
+    }
   };
 
   const generateResume = async () => {
@@ -1660,15 +1686,64 @@ OUTPUT (return ONLY this JSON, no markdown):
             <div className="px-5 py-3 border-b border-stone-200 flex items-center gap-2">
               <Target className="w-4 h-4 text-stone-500" />
               <h3 className="text-sm font-semibold text-stone-900">Job Description</h3>
-              <span className="text-xs text-stone-400 ml-auto">{jobDescription.length} chars</span>
+              <div className="ml-auto flex items-center gap-1 p-0.5 bg-stone-100 rounded-lg">
+                <button
+                  onClick={() => { setJdInputMode('text'); setJdFetchError(null); }}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${jdInputMode === 'text' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                >
+                  Paste text
+                </button>
+                <button
+                  onClick={() => { setJdInputMode('url'); setJdFetchError(null); }}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${jdInputMode === 'url' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                >
+                  Paste URL
+                </button>
+              </div>
             </div>
-            <textarea
-              value={jobDescription}
-              onChange={(e) => setJobDescription(e.target.value)}
-              placeholder="Paste the full JD."
-              className="w-full h-72 p-5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none resize-none"
-              style={{ fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace', fontSize: '13px', lineHeight: '1.6' }}
-            />
+
+            {jdInputMode === 'text' ? (
+              <textarea
+                value={jobDescription}
+                onChange={(e) => setJobDescription(e.target.value)}
+                placeholder="Paste the full JD."
+                className="w-full h-72 p-5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none resize-none"
+                style={{ fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace', fontSize: '13px', lineHeight: '1.6' }}
+              />
+            ) : (
+              <div className="p-5">
+                <p className="text-xs text-stone-500 mb-3">Paste a link to the job posting — LinkedIn, Greenhouse, Lever, company careers page, etc.</p>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={jdUrl}
+                    onChange={e => { setJdUrl(e.target.value); setJdFetchError(null); }}
+                    onKeyDown={e => e.key === 'Enter' && fetchJd()}
+                    placeholder="https://jobs.lever.co/company/role-id"
+                    className="flex-1 text-sm border border-stone-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                  />
+                  <button
+                    onClick={fetchJd}
+                    disabled={isFetchingJd || !jdUrl.trim()}
+                    className="px-4 py-2.5 bg-stone-900 text-white rounded-lg text-sm font-medium hover:bg-stone-800 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-colors whitespace-nowrap"
+                  >
+                    {isFetchingJd ? <><Loader2 className="w-4 h-4 animate-spin" />Fetching…</> : 'Fetch JD'}
+                  </button>
+                </div>
+                {jdFetchError && (
+                  <div className="mt-3 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-red-700">{jdFetchError}</p>
+                  </div>
+                )}
+                {jobDescription && jdInputMode === 'url' && (
+                  <div className="mt-3 flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                    <p className="text-xs text-emerald-700">JD fetched successfully — switching to text view.</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
