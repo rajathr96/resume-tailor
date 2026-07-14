@@ -1,9 +1,9 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sparkles, Copy, Check, AlertCircle, Loader2, Briefcase, Target, Wand2, TrendingUp, CheckCircle2, XCircle, Lightbulb, Zap, RotateCcw, ArrowRight, FileText, ChevronLeft, Pencil, X, Upload, FileUp, Download } from 'lucide-react';
 
 export default function ResumeBuilderPOC() {
-  const [mode, setMode] = useState('select'); // 'select' | 'master' | 'tailor'
+  const [mode, setMode] = useState('input'); // 'input' | 'output'
 
   // Master builder state
   const [rawNotes, setRawNotes] = useState('');
@@ -16,6 +16,9 @@ export default function ResumeBuilderPOC() {
   const [tailoredNewSkill, setTailoredNewSkill] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState('template1');
   const [selectedTailoredTemplate, setSelectedTailoredTemplate] = useState('template1');
+  const [layoutMode, setLayoutMode] = useState('split'); // 'split' | 'stack'
+  const [hoveredKeyword, setHoveredKeyword] = useState(null);
+  const [hoveredType, setHoveredType] = useState(null); // 'match' | 'gap'
   const [uploadedFile, setUploadedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isTransforming, setIsTransforming] = useState(false);
@@ -26,6 +29,14 @@ export default function ResumeBuilderPOC() {
   const [refineKey, setRefineKey] = useState(null);
   const [refinePrompt, setRefinePrompt] = useState('');
   const [isRefining, setIsRefining] = useState(false);
+
+  const textareaRef = useRef(null);
+  const [showAddSection, setShowAddSection] = useState(false);
+  const [addSectionForm, setAddSectionForm] = useState({ name: '', from: '', to: '', details: '', position: '' });
+  const [extraSections, setExtraSections] = useState([]);
+  const [customIdCounter, setCustomIdCounter] = useState(0);
+  const [t1SectionOrder, setT1SectionOrder] = useState(null);
+  const [t2SectionOrder, setT2SectionOrder] = useState(null);
 
   // Document-level rewrite state
   const [docRefinePrompt, setDocRefinePrompt] = useState('');
@@ -40,6 +51,8 @@ export default function ResumeBuilderPOC() {
   const [jdFetchError, setJdFetchError] = useState(null);
   const [archetype, setArchetype] = useState('Fintech PM');
   const [seniority, setSeniority] = useState('APM / Associate PM');
+  const [isGeneratingAll, setIsGeneratingAll] = useState(false);
+  const [generateAllStage, setGenerateAllStage] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [stage, setStage] = useState('');
@@ -57,7 +70,7 @@ export default function ResumeBuilderPOC() {
       const saved = localStorage.getItem('resume-tailor-state');
       if (!saved) return;
       const s = JSON.parse(saved);
-      if (s.mode) setMode(s.mode);
+      if (s.mode === 'input' || s.mode === 'output') setMode(s.mode);
       if (s.rawNotes) setRawNotes(s.rawNotes);
       if (s.masterResult) setMasterResult(s.masterResult);
       if (s.archetype) setArchetype(s.archetype);
@@ -81,12 +94,55 @@ export default function ResumeBuilderPOC() {
     } catch (_) {}
   }, [mode, rawNotes, masterResult, archetype, seniority, masterResume, jobDescription, result, originalResult, activeTab, personalInfo]);
 
+  // Highlight a keyword in a text string — returns a React node array with <mark> spans
+  const highlightText = (text, keyword) => {
+    if (!keyword || !text) return text;
+    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+    if (parts.length === 1) return text;
+    return parts.map((part, i) =>
+      part.toLowerCase() === keyword.toLowerCase()
+        ? <mark key={i} style={{ backgroundColor: '#fef08a', borderRadius: '2px', padding: '0 2px', color: 'inherit' }}>{part}</mark>
+        : part
+    );
+  };
+
+  const renderBullet = (text, keyword) => {
+    if (!text) return text;
+    if (!text.includes('**')) return highlightText(text, keyword);
+    const parts = text.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((part, i) => {
+      if (/^\*\*[^*]+\*\*$/.test(part)) {
+        const inner = part.slice(2, -2);
+        return <strong key={i}>{highlightText(inner, keyword) || inner}</strong>;
+      }
+      return <React.Fragment key={i}>{highlightText(part, keyword)}</React.Fragment>;
+    });
+  };
+
+  const applyBold = () => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (start === end) {
+      const newText = editingText.slice(0, start) + '****' + editingText.slice(end);
+      setEditingText(newText);
+      setTimeout(() => { ta.focus(); ta.setSelectionRange(start + 2, start + 2); }, 0);
+    } else {
+      const selected = editingText.slice(start, end);
+      const newText = editingText.slice(0, start) + `**${selected}**` + editingText.slice(end);
+      setEditingText(newText);
+    }
+  };
+
   const archetypes = ['Fintech PM', 'Growth PM', 'Platform/Technical PM', 'Consumer PM', 'B2B/Enterprise PM', '0→1 / Product Strategy'];
   const seniorities = ['APM / Associate PM', 'PM (IC)', 'Senior PM', 'Group PM / Lead PM'];
 
   const exportToPDF = (mr, pi) => {
     const info = pi || personalInfo;
     const contactParts = [info.email, info.phone, info.location, info.linkedin].filter(Boolean);
+    const boldToHtml = t => t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
 
     const expHtml = mr.master_experiences.map(e => `
       <div class="exp-block">
@@ -94,7 +150,7 @@ export default function ResumeBuilderPOC() {
           <span class="exp-title">${e.role} | ${e.company}</span>
           <span class="exp-dates">${e.dates}</span>
         </div>
-        <ul>${e.bullets.map(b => `<li>${b}</li>`).join('')}</ul>
+        <ul>${e.bullets.map(b => `<li>${boldToHtml(b)}</li>`).join('')}</ul>
       </div>`).join('');
 
     const eduHtml = mr.education?.length ? mr.education.map(e => `
@@ -157,6 +213,16 @@ export default function ResumeBuilderPOC() {
   <div class="section-header">Skills</div>
   <hr class="section-rule"/>
   ${skillsHtml}` : ''}
+
+  ${extraSections.length ? extraSections.map(sec => `
+  <div class="section-header">${sec.name}</div>
+  <hr class="section-rule"/>
+  <div class="exp-block">
+    <div class="exp-row">
+      <ul style="padding-left:16px;margin:0;">${sec.bullets.map(b => `<li style="font-size:10pt;margin-bottom:2px;">${b}</li>`).join('')}</ul>
+      ${(sec.from || sec.to) ? `<span class="exp-dates">${[sec.from, sec.to].filter(Boolean).join(' – ')}</span>` : ''}
+    </div>
+  </div>`).join('') : ''}
 </body></html>`;
 
     const w = window.open('', '_blank');
@@ -173,13 +239,14 @@ export default function ResumeBuilderPOC() {
       info.linkedin ?? null,
       info.location ?? null,
     ].filter(Boolean);
+    const boldToHtml = t => t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
 
     const expHtml = mr.master_experiences.map(e => `
       <div class="exp-block">
         <div class="exp-title">${e.role}</div>
         <div class="exp-company">${e.company}</div>
         <div class="exp-dates">${e.dates}</div>
-        <ul>${e.bullets.map(b => `<li>${b}</li>`).join('')}</ul>
+        <ul>${e.bullets.map(b => `<li>${boldToHtml(b)}</li>`).join('')}</ul>
       </div>`).join('');
 
     const eduHtml = mr.education?.length ? mr.education.map(e => `
@@ -247,6 +314,7 @@ export default function ResumeBuilderPOC() {
       ${eduHtml ? `<div class="section-header">Education</div><hr class="section-rule"/>${eduHtml}` : ''}
       ${achievementsHtml ? `<div class="section-header">Key Achievements</div><hr class="section-rule"/>${achievementsHtml}` : ''}
       ${skillsHtml ? `<div class="section-header">Skills</div><hr class="section-rule"/><div class="skills-text">${skillsHtml}</div>` : ''}
+      ${extraSections.length ? extraSections.map(sec => `<div class="section-header">${sec.name}</div><hr class="section-rule"/><div style="margin-bottom:5px;"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;"><ul style="padding-left:12px;margin:0;">${sec.bullets.map(b => `<li style="font-size:8.5pt;margin-bottom:1px;">${b}</li>`).join('')}</ul>${(sec.from || sec.to) ? `<span style="font-size:7.5pt;color:#666;white-space:nowrap;">${[sec.from, sec.to].filter(Boolean).join(' – ')}</span>` : ''}</div></div>`).join('') : ''}
     </div>
   </div>
 </body></html>`;
@@ -400,6 +468,110 @@ OUTPUT (return ONLY this JSON, no markdown):
       setJdFetchError(err.message);
     } finally {
       setIsFetchingJd(false);
+    }
+  };
+
+  const generateAll = async () => {
+    const hasResume = inputMode === 'upload' ? !!uploadedFile : rawNotes.trim().length > 0;
+    if (!hasResume || !jobDescription.trim()) return;
+    setIsGeneratingAll(true);
+    setError(null);
+    setResult(null);
+    setOriginalResult(null);
+    setPreviousScore(null);
+    setSelectedWins(new Set());
+    try {
+      let parsedMaster = null;
+
+      // ── Step 1: Build/parse master resume ─────────────────────────────────
+      if (inputMode === 'upload' && uploadedFile) {
+        setGenerateAllStage('Extracting resume…');
+        const formData = new FormData();
+        formData.append('pdf', uploadedFile);
+        const extractRes = await fetch('/api/extract-pdf', { method: 'POST', body: formData });
+        const extractData = await extractRes.json();
+        if (extractData.error) throw new Error(extractData.error);
+
+        setGenerateAllStage('Structuring resume…');
+        const sysP = `You are a senior resume strategist. Restructure and strengthen this resume for a ${archetype} PM at ${seniority} level.
+
+TASKS:
+1. Parse all work experiences (company, role, dates, bullets). Handle PDF extraction noise gracefully.
+2. Rewrite every bullet into XYZ format: "[Strong verb] + [what you did with scope/context] + [quantified impact]". ~15-22 words.
+3. Preserve all original facts, metrics, company names, and dates. Do not invent anything.
+4. Extract education — institution, degree, field, dates.
+5. Extract personal contact info where present in the text (name, title, email, phone, location, LinkedIn URL/handle).
+6. Apply ${archetype} archetype lens — prioritise the most relevant bullets.
+
+OUTPUT (return ONLY this JSON, no markdown):
+{
+  "personal_info": { "name": "", "title": "", "email": "", "phone": "", "location": "", "linkedin": "" },
+  "summary": "2-3 sentence professional summary.",
+  "master_experiences": [{"company":"","role":"","dates":"","bullets":[]}],
+  "education": [{"institution":"","degree":"","field":"","dates":""}],
+  "skills": []
+}`;
+        const text = await callClaude(sysP, `EXTRACTED RESUME TEXT:\n${extractData.text}\n\nReturn ONLY the JSON.`, 4000);
+        parsedMaster = JSON.parse(text);
+      } else {
+        setGenerateAllStage('Structuring resume…');
+        const sysP = `You are a senior career coach and resume strategist. Transform the provided text into a structured master resume for a ${archetype} PM at ${seniority} level.
+
+The input may be a formatted resume, raw career notes, or a conversational career narrative — handle all gracefully.
+Extract personal contact info if present (name, title, email, phone, location, LinkedIn). If not present, leave fields blank.
+Rewrite experience bullets in XYZ format: "[Strong verb] + [scope/context] + [quantified impact]". ~15-22 words.
+Do not invent facts, metrics, or claims not in the source.
+
+OUTPUT (return ONLY this JSON, no markdown):
+{
+  "personal_info": { "name": "", "title": "", "email": "", "phone": "", "location": "", "linkedin": "" },
+  "summary": "2-3 sentence professional summary.",
+  "master_experiences": [{"company":"","role":"","dates":"","bullets":[]}],
+  "education": [{"institution":"","degree":"","field":"","dates":""}],
+  "skills": []
+}`;
+        const text = await callClaude(sysP, `INPUT:\n${rawNotes}\n\nReturn ONLY the JSON.`, 4000);
+        parsedMaster = JSON.parse(text);
+      }
+
+      setMasterResult(parsedMaster);
+      if (parsedMaster.personal_info) {
+        const pi = parsedMaster.personal_info;
+        setPersonalInfo(prev => ({
+          name: pi.name || prev.name,
+          title: pi.title || prev.title,
+          email: pi.email || prev.email,
+          phone: pi.phone || prev.phone,
+          location: pi.location || prev.location,
+          linkedin: pi.linkedin || prev.linkedin,
+        }));
+      }
+      const masterText = masterResultToPlainText(parsedMaster);
+      setMasterResume(masterText);
+
+      // ── Step 2: Tailor ────────────────────────────────────────────────────
+      setGenerateAllStage('Tailoring for the role…');
+      const tailored = await tailorBullets(masterText, jobDescription);
+
+      // ── Step 3: Score ─────────────────────────────────────────────────────
+      setGenerateAllStage('Running ATS analysis…');
+      const ats = await scoreResume(tailored, jobDescription);
+
+      const finalResult = {
+        ...tailored, ats,
+        summary: parsedMaster.summary || '',
+        skills: parsedMaster.skills || [],
+        education: parsedMaster.education || [],
+      };
+      setResult(finalResult);
+      setOriginalResult(finalResult);
+      setActiveTab('addressable');
+      setMode('output');
+    } catch (err) {
+      setError(`Generation failed: ${err.message}. Try again.`);
+    } finally {
+      setIsGeneratingAll(false);
+      setGenerateAllStage('');
     }
   };
 
@@ -724,6 +896,23 @@ OUTPUT (return ONLY this JSON, no markdown):
     }));
   };
 
+  const deleteCustomSection = (id) => {
+    setExtraSections(prev => prev.filter(s => s.id !== id));
+    const T1D = ['summary', 'experience', 'education', 'skills'];
+    const T2D = ['experience', 'summary', 'education', 'achievements', 'skills'];
+    setT1SectionOrder(prev => (prev || T1D).filter(x => x !== id));
+    setT2SectionOrder(prev => (prev || T2D).filter(x => x !== id));
+  };
+
+  const updateTailoredRole = (expIdx, newRole) => {
+    setResult(prev => ({
+      ...prev,
+      tailored_experiences: prev.tailored_experiences.map((exp, ei) =>
+        ei !== expIdx ? exp : { ...exp, role: newRole }
+      )
+    }));
+  };
+
   const refineTailoredBullet = async (expIdx, bIdx, bullet) => {
     if (!refinePrompt.trim()) return;
     setIsRefining(true);
@@ -827,6 +1016,7 @@ OUTPUT (return ONLY this JSON, no markdown):
     skills: result.skills ?? [],
   } : null;
 
+
   return (
     <div className="min-h-screen bg-stone-50" style={{ fontFamily: '"Inter", system-ui, sans-serif' }}>
       <style dangerouslySetInnerHTML={{ __html: `
@@ -835,102 +1025,255 @@ OUTPUT (return ONLY this JSON, no markdown):
         .bullet-card:hover .copy-btn { opacity: 1; }
       ` }} />
 
-      <header className="border-b border-stone-200 bg-white">
-        <div className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between">
+      {/* ═══════════════════════════════════════════════════════════
+          HEADER
+      ═══════════════════════════════════════════════════════════ */}
+      <header className="border-b border-stone-200 bg-white sticky top-0 z-20">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {mode !== 'select' && (
-              <button onClick={() => setMode('select')} className="mr-1 p-1.5 rounded-lg hover:bg-stone-100 transition-colors">
-                <ChevronLeft className="w-5 h-5 text-stone-600" />
-              </button>
-            )}
-            <div className="w-9 h-9 rounded-lg bg-stone-900 flex items-center justify-center">
-              <Wand2 className="w-5 h-5 text-stone-50" />
+            <div className="w-8 h-8 rounded-lg bg-stone-900 flex items-center justify-center">
+              <Wand2 className="w-4 h-4 text-stone-50" />
             </div>
-            <div>
-              <h1 className="display-font text-xl font-semibold text-stone-900 leading-tight">Resume Tailor</h1>
-              <p className="text-xs text-stone-500">
-                {mode === 'select' ? 'What would you like to do?' : mode === 'master' ? 'Build Master Resume' : 'Tailor for a Role'}
-              </p>
+            <h1 className="display-font text-lg font-semibold text-stone-900">Resume Tailor</h1>
+          </div>
+
+          {/* Step indicator */}
+          <div className="hidden md:flex items-center gap-2 text-xs">
+            <div className={`flex items-center gap-1.5 ${mode === 'input' ? 'text-stone-900 font-semibold' : 'text-stone-400'}`}>
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${mode === 'input' ? 'bg-stone-900 text-white' : 'bg-emerald-500 text-white'}`}>
+                {mode === 'output' ? <Check className="w-3 h-3" /> : '1'}
+              </div>
+              Your Details
+            </div>
+            <div className="w-8 h-px bg-stone-300" />
+            <div className={`flex items-center gap-1.5 ${mode === 'output' ? 'text-stone-900 font-semibold' : 'text-stone-400'}`}>
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${mode === 'output' ? 'bg-stone-900 text-white' : 'bg-stone-200 text-stone-500'}`}>2</div>
+              Review &amp; Edit
+            </div>
+            <div className="w-8 h-px bg-stone-300" />
+            <div className="flex items-center gap-1.5 text-stone-400">
+              <div className="w-5 h-5 rounded-full bg-stone-200 text-stone-500 flex items-center justify-center text-xs font-bold">3</div>
+              Download
             </div>
           </div>
-          {mode === 'master' && (
-            <button onClick={loadSampleMaster} className="text-sm text-stone-600 hover:text-stone-900 transition-colors underline underline-offset-4">
-              Load sample data
-            </button>
-          )}
-          {mode === 'tailor' && (
-            <button onClick={loadSample} className="text-sm text-stone-600 hover:text-stone-900 transition-colors underline underline-offset-4">
-              Load sample data
-            </button>
-          )}
+
+          <div className="flex items-center gap-3">
+            {mode === 'output' && (
+              <button
+                onClick={() => { setMode('input'); setResult(null); setError(null); }}
+                className="flex items-center gap-1.5 text-sm text-stone-500 hover:text-stone-900 transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4" /> Start over
+              </button>
+            )}
+            {mode === 'input' && (
+              <button onClick={loadSample} className="text-sm text-stone-500 hover:text-stone-900 transition-colors underline underline-offset-4">
+                Load sample
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-10">
+      <main className="max-w-5xl mx-auto px-6 py-10">
 
-        {/* ── MODE SELECTION ── */}
-        {mode === 'select' && (
+        {/* ═══════════════════════════════════════════════════════════
+            STEP 1 — INPUT
+        ═══════════════════════════════════════════════════════════ */}
+        {mode === 'input' && (
           <div>
-            <div className="mb-10 max-w-2xl">
-              <h2 className="display-font text-4xl font-semibold text-stone-900 leading-tight mb-3">
-                Where do you want to start?
+            <div className="mb-8">
+              <h2 className="display-font text-4xl font-semibold text-stone-900 leading-tight mb-2">
+                Build your tailored resume.
               </h2>
-              <p className="text-stone-600 leading-relaxed">
-                Build a polished master resume from scratch, or jump straight to tailoring an existing one for a specific role.
+              <p className="text-stone-500 leading-relaxed">
+                Paste or upload your resume, add the job description — we'll structure, tailor, and score it for you.
               </p>
             </div>
-            <div className="grid md:grid-cols-2 gap-5 max-w-3xl">
-              <button
-                onClick={() => setMode('master')}
-                className="group text-left bg-white border-2 border-stone-200 hover:border-stone-900 rounded-2xl p-7 transition-all duration-200 hover:shadow-md"
-              >
-                <div className="w-12 h-12 rounded-xl bg-stone-100 group-hover:bg-stone-900 flex items-center justify-center mb-5 transition-colors">
-                  <FileText className="w-6 h-6 text-stone-600 group-hover:text-stone-50 transition-colors" />
-                </div>
-                <h3 className="display-font text-xl font-semibold text-stone-900 mb-2">Build Master Resume</h3>
-                <p className="text-sm text-stone-500 leading-relaxed">
-                  Narrate your work stories the way you'd tell them to a friend. A career coach extracts the strongest resume bullets from your narrative.
-                </p>
-                <div className="mt-5 flex items-center gap-1.5 text-xs font-medium text-stone-400 group-hover:text-stone-900 transition-colors">
-                  Tell your story <ArrowRight className="w-3.5 h-3.5" />
-                </div>
-              </button>
 
-              <button
-                onClick={() => setMode('tailor')}
-                className="group text-left bg-white border-2 border-stone-200 hover:border-stone-900 rounded-2xl p-7 transition-all duration-200 hover:shadow-md"
-              >
-                <div className="w-12 h-12 rounded-xl bg-stone-100 group-hover:bg-stone-900 flex items-center justify-center mb-5 transition-colors">
-                  <Target className="w-6 h-6 text-stone-600 group-hover:text-stone-50 transition-colors" />
+            {/* Two-panel input */}
+            <div className="grid md:grid-cols-2 gap-5 mb-5">
+
+              {/* Left: Your Resume */}
+              <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
+                <div className="px-5 py-3 border-b border-stone-200 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-stone-500" />
+                  <h3 className="text-sm font-semibold text-stone-900">Your Resume</h3>
+                  <div className="ml-auto flex items-center gap-0.5 p-0.5 bg-stone-100 rounded-lg">
+                    <button
+                      onClick={() => setInputMode('upload')}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${inputMode === 'upload' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                    >
+                      Upload
+                    </button>
+                    <button
+                      onClick={() => setInputMode('story')}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${inputMode === 'story' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                    >
+                      Paste text
+                    </button>
+                  </div>
                 </div>
-                <h3 className="display-font text-xl font-semibold text-stone-900 mb-2">Tailor for a Role</h3>
-                <p className="text-sm text-stone-500 leading-relaxed">
-                  Have a master resume already? Paste it alongside a job description and get tailored bullets, ATS scoring, and actionable Quick Wins.
-                </p>
-                <div className="mt-5 flex items-center gap-1.5 text-xs font-medium text-stone-400 group-hover:text-stone-900 transition-colors">
-                  I have a master resume <ArrowRight className="w-3.5 h-3.5" />
+
+                {inputMode === 'upload' ? (
+                  <div className="p-5">
+                    <label
+                      onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+                      onDragLeave={() => setIsDragging(false)}
+                      onDrop={e => { e.preventDefault(); setIsDragging(false); const f = e.dataTransfer.files[0]; if (f) setUploadedFile(f); }}
+                      className={`flex flex-col items-center justify-center w-full h-56 border-2 border-dashed rounded-xl cursor-pointer transition-all ${isDragging ? 'border-stone-500 bg-stone-100' : uploadedFile ? 'border-emerald-300 bg-emerald-50' : 'border-stone-300 bg-stone-50 hover:border-stone-400 hover:bg-stone-100'}`}
+                    >
+                      <input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={e => { const f = e.target.files[0]; if (f) setUploadedFile(f); }} />
+                      {uploadedFile ? (
+                        <>
+                          <CheckCircle2 className="w-8 h-8 text-emerald-500 mb-3" />
+                          <p className="text-sm font-medium text-stone-900">{uploadedFile.name}</p>
+                          <p className="text-xs text-stone-500 mt-1">{(uploadedFile.size / 1024).toFixed(0)} KB · Click to change</p>
+                        </>
+                      ) : (
+                        <>
+                          <FileUp className="w-8 h-8 text-stone-400 mb-3" />
+                          <p className="text-sm font-medium text-stone-700">Drop your resume here</p>
+                          <p className="text-xs text-stone-400 mt-1">PDF, DOC, DOCX · or click to browse</p>
+                        </>
+                      )}
+                    </label>
+                  </div>
+                ) : (
+                  <textarea
+                    value={rawNotes}
+                    onChange={e => setRawNotes(e.target.value)}
+                    placeholder={`Paste your resume text here, or just tell your story:\n\n"At Stripe I owned fraud prevention. Our review queue was taking 3 days — I mapped the workflow, found a broken triage rule, rewrote the logic, and queue time dropped to 4 hours, saving ~$2M in chargeback exposure..."\n\nNo structure needed. I'll extract the bullets.`}
+                    className="w-full h-72 p-5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none resize-none"
+                    style={{ fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace', fontSize: '13px', lineHeight: '1.6' }}
+                  />
+                )}
+              </div>
+
+              {/* Right: Job Description */}
+              <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
+                <div className="px-5 py-3 border-b border-stone-200 flex items-center gap-2">
+                  <Target className="w-4 h-4 text-stone-500" />
+                  <h3 className="text-sm font-semibold text-stone-900">Job Description</h3>
+                  <div className="ml-auto flex items-center gap-0.5 p-0.5 bg-stone-100 rounded-lg">
+                    <button
+                      onClick={() => { setJdInputMode('text'); setJdFetchError(null); }}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${jdInputMode === 'text' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                    >
+                      Paste text
+                    </button>
+                    <button
+                      onClick={() => { setJdInputMode('url'); setJdFetchError(null); }}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${jdInputMode === 'url' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                    >
+                      Paste URL
+                    </button>
+                  </div>
                 </div>
-              </button>
+
+                {jdInputMode === 'text' ? (
+                  <textarea
+                    value={jobDescription}
+                    onChange={e => setJobDescription(e.target.value)}
+                    placeholder="Paste the full job description…"
+                    className="w-full h-72 p-5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none resize-none"
+                    style={{ fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace', fontSize: '13px', lineHeight: '1.6' }}
+                  />
+                ) : (
+                  <div className="p-5">
+                    <p className="text-xs text-stone-500 mb-3">Paste a link to the job posting — LinkedIn, Greenhouse, Lever, company careers page, etc.</p>
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={jdUrl}
+                        onChange={e => { setJdUrl(e.target.value); setJdFetchError(null); }}
+                        onKeyDown={e => e.key === 'Enter' && fetchJd()}
+                        placeholder="https://jobs.lever.co/company/role-id"
+                        className="flex-1 text-sm border border-stone-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                      />
+                      <button
+                        onClick={fetchJd}
+                        disabled={isFetchingJd || !jdUrl.trim()}
+                        className="px-4 py-2.5 bg-stone-900 text-white rounded-lg text-sm font-medium hover:bg-stone-800 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-colors whitespace-nowrap"
+                      >
+                        {isFetchingJd ? <><Loader2 className="w-4 h-4 animate-spin" />Fetching…</> : 'Fetch JD'}
+                      </button>
+                    </div>
+                    {jdFetchError && (
+                      <div className="mt-3 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                        <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                        <p className="text-xs text-red-700">{jdFetchError}</p>
+                      </div>
+                    )}
+                    {jobDescription && jdInputMode === 'url' && (
+                      <div className="mt-3 flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                        <p className="text-xs text-emerald-700">JD fetched — switching to text view.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Archetype + Seniority */}
+            <div className="bg-white rounded-xl border border-stone-200 p-5 mb-6">
+              <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-3">Shape the framing</p>
+              <div className="grid md:grid-cols-2 gap-5">
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-2">PM Archetype — <span className="font-normal text-stone-400">what kind of PM are you targeting?</span></label>
+                  <div className="flex flex-wrap gap-2">
+                    {archetypes.map(a => (
+                      <button key={a} onClick={() => setArchetype(a)}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${archetype === a ? 'bg-stone-900 text-stone-50' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}>
+                        {a}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-2">Seniority — <span className="font-normal text-stone-400">what level are you at?</span></label>
+                  <div className="flex flex-wrap gap-2">
+                    {seniorities.map(s => (
+                      <button key={s} onClick={() => setSeniority(s)}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${seniority === s ? 'bg-stone-900 text-stone-50' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {error && (
+              <div className="mb-5 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-red-900">{error}</div>
+              </div>
+            )}
+
+            <button
+              onClick={generateAll}
+              disabled={isGeneratingAll || (inputMode === 'upload' ? !uploadedFile : !rawNotes.trim()) || !jobDescription.trim()}
+              className="w-full md:w-auto px-10 py-4 bg-stone-900 text-stone-50 rounded-xl font-semibold text-sm hover:bg-stone-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2.5 shadow-sm"
+            >
+              {isGeneratingAll ? (
+                <><Loader2 className="w-4 h-4 animate-spin" />{generateAllStage || 'Working…'}</>
+              ) : (
+                <><Sparkles className="w-4 h-4" />Generate Tailored Resume</>
+              )}
+            </button>
           </div>
         )}
 
-        {/* ── MASTER RESUME BUILDER ── */}
-        {mode === 'master' && (
+        {/* ═══════════════════════════════════════════════════════════
+            STEP 2 — OUTPUT (Review & Edit)
+        ═══════════════════════════════════════════════════════════ */}
+        {mode === 'output' && result && (
           <div>
-            <div className="mb-8 max-w-3xl">
-              <h2 className="display-font text-4xl font-semibold text-stone-900 leading-tight mb-3">
-                Build your <span className="text-stone-400">master resume.</span>
-              </h2>
-              <p className="text-stone-600 leading-relaxed">
-                {inputMode === 'story'
-                  ? "Just tell your story the way you'd explain it to a friend. No structure needed — narrate what you worked on, what problems you solved, what changed because of you."
-                  : "Upload your existing resume PDF. We'll extract the content and restructure it into sharp, ATS-ready bullets framed for your target archetype."}
-              </p>
-            </div>
 
             {/* Personal Details */}
-            <div className="bg-white rounded-xl border border-stone-200 p-5 mb-5">
+            <div className="bg-white rounded-xl border border-stone-200 p-5 mb-6">
               <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-4">Your Details</p>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {[
@@ -955,530 +1298,186 @@ OUTPUT (return ONLY this JSON, no markdown):
               </div>
             </div>
 
-            {/* Toggle */}
-            <div className="flex gap-1 p-1 bg-stone-100 rounded-xl w-fit mb-5">
-              <button
-                onClick={() => setInputMode('story')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${inputMode === 'story' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
-              >
-                <FileText className="w-4 h-4" /> Write your story
-              </button>
-              <button
-                onClick={() => setInputMode('upload')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${inputMode === 'upload' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
-              >
-                <Upload className="w-4 h-4" /> Upload existing resume
-              </button>
-            </div>
-
-            {inputMode === 'story' && (
-              <div className="bg-white rounded-xl border border-stone-200 overflow-hidden mb-5">
-                <div className="px-5 py-3 border-b border-stone-200 flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-stone-500" />
-                  <h3 className="text-sm font-semibold text-stone-900">Raw Experience Notes</h3>
-                  <span className="text-xs text-stone-400 ml-auto">{rawNotes.length} chars</span>
-                </div>
-                <textarea
-                  value={rawNotes}
-                  onChange={(e) => setRawNotes(e.target.value)}
-                  placeholder={`Just tell your story — no structure needed. For example:\n\n"At Stripe I was on the fraud team. We had this big problem where our manual review queue was taking 3 days to clear and merchants were losing money. I basically took it on myself to figure out why. I ran a bunch of interviews with the ops team, mapped out the whole workflow, and realised 60% of cases were getting rerouted because of a broken triage rule. I rewrote the logic, got eng to ship it in a sprint, and the queue time dropped to under 4 hours. My manager said it saved us around $2M in chargeback exposure that quarter."\n\nTell me about your roles, what you worked on, problems you solved, decisions you made, outcomes you drove. I'll extract the resume bullets.`}
-                  className="w-full h-80 p-5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none resize-none"
-                  style={{ fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace', fontSize: '13px', lineHeight: '1.6' }}
-                />
-              </div>
-            )}
-
-            {inputMode === 'upload' && (
-              <div className="mb-5">
-                <label
-                  onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
-                  onDragLeave={() => setIsDragging(false)}
-                  onDrop={e => {
-                    e.preventDefault();
-                    setIsDragging(false);
-                    const f = e.dataTransfer.files[0];
-                    if (f?.type === 'application/pdf') setUploadedFile(f);
-                  }}
-                  className={`flex flex-col items-center justify-center w-full h-52 border-2 border-dashed rounded-xl cursor-pointer transition-all ${isDragging ? 'border-stone-500 bg-stone-100' : uploadedFile ? 'border-emerald-300 bg-emerald-50' : 'border-stone-300 bg-white hover:border-stone-400 hover:bg-stone-50'}`}
+            {/* ── Layout Toggle ── */}
+            <div className="flex justify-end mb-4">
+              <div className="flex gap-0.5 p-1 bg-stone-100 rounded-lg">
+                <button
+                  onClick={() => setLayoutMode('split')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 ${layoutMode === 'split' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
                 >
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    className="hidden"
-                    onChange={e => {
-                      const f = e.target.files[0];
-                      if (f) setUploadedFile(f);
-                    }}
-                  />
-                  {uploadedFile ? (
-                    <>
-                      <CheckCircle2 className="w-8 h-8 text-emerald-500 mb-3" />
-                      <p className="text-sm font-medium text-stone-900">{uploadedFile.name}</p>
-                      <p className="text-xs text-stone-500 mt-1">{(uploadedFile.size / 1024).toFixed(0)} KB · Click to change</p>
-                    </>
-                  ) : (
-                    <>
-                      <FileUp className="w-8 h-8 text-stone-400 mb-3" />
-                      <p className="text-sm font-medium text-stone-700">Drop your resume PDF here</p>
-                      <p className="text-xs text-stone-400 mt-1">or click to browse</p>
-                    </>
-                  )}
-                </label>
-              </div>
-            )}
-
-            <div className="bg-white rounded-xl border border-stone-200 p-5 mb-5">
-              <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-4">Shape the framing</p>
-              <div className="grid md:grid-cols-2 gap-5">
-                <div>
-                  <label className="block text-xs font-medium text-stone-500 mb-2">PM Archetype <span className="text-stone-400 font-normal">— what kind of PM are you?</span></label>
-                  <div className="flex flex-wrap gap-2">
-                    {archetypes.map(a => (
-                      <button key={a} onClick={() => setArchetype(a)}
-                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${archetype === a ? 'bg-stone-900 text-stone-50' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}>
-                        {a}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-stone-500 mb-2">Seniority <span className="text-stone-400 font-normal">— what level are you at?</span></label>
-                  <div className="flex flex-wrap gap-2">
-                    {seniorities.map(s => (
-                      <button key={s} onClick={() => setSeniority(s)}
-                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${seniority === s ? 'bg-stone-900 text-stone-50' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}>
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                  <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="12" rx="1" fill="currentColor"/><rect x="8" y="1" width="5" height="12" rx="1" fill="currentColor"/></svg>
+                  Side by side
+                </button>
+                <button
+                  onClick={() => setLayoutMode('stack')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 ${layoutMode === 'stack' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                >
+                  <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="5" rx="1" fill="currentColor"/><rect x="1" y="8" width="12" height="5" rx="1" fill="currentColor"/></svg>
+                  Stacked
+                </button>
               </div>
             </div>
 
-            {inputMode === 'story' ? (
-              <button
-                onClick={buildMasterResume}
-                disabled={isBuildingMaster || !rawNotes.trim()}
-                className="px-8 py-4 bg-stone-900 text-stone-50 rounded-xl font-medium text-sm hover:bg-stone-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm mb-6"
-              >
-                {isBuildingMaster ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" />Building master resume...</>
-                ) : (
-                  <><Sparkles className="w-4 h-4" />{masterResult ? 'Rebuild' : 'Build Master Resume'}</>
-                )}
-              </button>
-            ) : (
-              <button
-                onClick={transformResume}
-                disabled={isTransforming || !uploadedFile}
-                className="px-8 py-4 bg-stone-900 text-stone-50 rounded-xl font-medium text-sm hover:bg-stone-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm mb-6"
-              >
-                {isTransforming ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" />Transforming resume...</>
-                ) : (
-                  <><Sparkles className="w-4 h-4" />{masterResult ? 'Re-transform' : 'Transform Resume'}</>
-                )}
-              </button>
-            )}
+            {/* ── Two-column: Resume (left) + Feedback (right) ── */}
+            <div className={`flex gap-5 items-start ${layoutMode === 'split' ? 'flex-col lg:flex-row' : 'flex-col'}`}>
 
-            {masterError && (
-              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-                <div className="text-sm text-red-900">{masterError}</div>
-              </div>
-            )}
-
-            {masterResult && (
-              <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
-
-                {/* Action bar */}
-                <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between flex-wrap gap-3">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span className="text-sm font-semibold text-stone-900">Master Resume</span>
-                    <span className="text-xs text-stone-400">· {masterResult.master_experiences.length} roles</span>
+            {/* LEFT: Resume Preview */}
+            <div className="flex-1 min-w-0">
+            <div className={`bg-white rounded-xl overflow-hidden transition-all duration-300 ${hoveredType === 'gap' ? 'border-2 border-red-300 shadow-[0_0_0_3px_rgba(252,165,165,0.35)]' : 'border border-stone-200'}`}>
+              {/* Action bar */}
+              <div className="px-5 py-3 border-b border-stone-200 flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span className="text-sm font-semibold text-stone-900">Tailored Resume</span>
+                  <span className="text-xs text-stone-400">· {result.tailored_experiences?.length} roles</span>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Template switcher */}
+                  <div className="flex gap-0.5 p-1 bg-stone-100 rounded-lg">
+                    <button onClick={() => setSelectedTailoredTemplate('template1')}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${selectedTailoredTemplate === 'template1' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>
+                      Template 1
+                    </button>
+                    <button onClick={() => setSelectedTailoredTemplate('template2')}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${selectedTailoredTemplate === 'template2' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>
+                      Template 2
+                    </button>
                   </div>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    {/* Template switcher */}
-                    <div className="flex gap-0.5 p-1 bg-stone-100 rounded-lg">
-                      <button
-                        onClick={() => setSelectedTemplate('template1')}
-                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${selectedTemplate === 'template1' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
-                      >
-                        Template 1
-                      </button>
-                      <button
-                        onClick={() => setSelectedTemplate('template2')}
-                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${selectedTemplate === 'template2' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
-                      >
-                        Template 2
-                      </button>
-                    </div>
-                    <button
-                      onClick={() => selectedTemplate === 'template1' ? exportToPDF(masterResult, personalInfo) : exportToPDFTemplate2(masterResult, personalInfo)}
-                      className="px-3 py-2 text-xs font-medium text-stone-700 border border-stone-200 hover:bg-stone-50 rounded-lg flex items-center gap-1.5 transition-colors"
-                    >
-                      <Download className="w-3.5 h-3.5" /> Download PDF
-                    </button>
-                    <button
-                      onClick={useForTailoring}
-                      className="px-4 py-2 bg-stone-900 text-stone-50 rounded-lg text-xs font-medium hover:bg-stone-800 transition-all flex items-center gap-1.5 shadow-sm"
-                    >
-                      Use for Role Tailoring <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
+                  {/* Download — Step 3 */}
+                  <button
+                    onClick={() => selectedTailoredTemplate === 'template1' ? exportToPDF(tailoredDisplay, personalInfo) : exportToPDFTemplate2(tailoredDisplay, personalInfo)}
+                    className="px-4 py-2 bg-stone-900 text-stone-50 rounded-lg text-xs font-semibold flex items-center gap-1.5 hover:bg-stone-800 transition-colors shadow-sm"
+                  >
+                    <Download className="w-3.5 h-3.5" /> Download PDF
+                  </button>
+                  <button onClick={copyAll} className="px-3 py-2 text-xs font-medium text-stone-700 border border-stone-200 hover:bg-stone-50 rounded-lg flex items-center gap-1.5 transition-colors">
+                    {copiedIdx === 'all' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedIdx === 'all' ? 'Copied' : 'Copy all'}
+                  </button>
+                </div>
+              </div>
+
+              {result.tailoring_notes && (
+                <div className="px-6 py-3 bg-amber-50 border-b border-amber-100">
+                  <div className="flex items-start gap-2">
+                    <Lightbulb className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-900 leading-relaxed">{result.tailoring_notes}</p>
                   </div>
                 </div>
+              )}
 
-                {/* Template preview */}
-                <div style={{ fontFamily: 'Calibri, Arial, sans-serif' }}>
-                {selectedTemplate === 'template1' && (
-                <div className="px-10 py-8">
+              {/* Template preview */}
+              <div style={{ fontFamily: 'Calibri, Arial, sans-serif' }}>
 
-                  {/* Header */}
-                  <div className="text-3xl font-bold text-stone-900 leading-tight">{personalInfo.name || 'Your Name'}</div>
-                  <div className="text-sm text-stone-500 mt-0.5 mb-1">{personalInfo.title || 'Your Title / Profession'}</div>
-                  <div className="text-xs text-stone-500 text-center py-1">
-                    {[personalInfo.email, personalInfo.phone, personalInfo.location, personalInfo.linkedin].filter(Boolean).join(' | ') || 'email@example.com | (123) 456-7890 | City, Country | linkedin.com/in/yourname'}
+              {selectedTailoredTemplate === 'template1' && (
+              <div className="px-10 py-8">
+                {/* T1 Header */}
+                <div className="mb-1">
+                  <div className="font-bold text-stone-900" style={{ fontSize: '1.35rem' }}>
+                    {personalInfo.name || 'YOUR NAME'}
                   </div>
-                  <div className="border-t-2 mt-2 mb-4" style={{ borderColor: '#1F4E79' }} />
+                  {personalInfo.title && <div className="text-sm" style={{ color: '#1F4E79' }}>{personalInfo.title}</div>}
+                </div>
+                <div className="text-xs text-stone-500 mb-1 flex flex-wrap gap-3">
+                  {[personalInfo.email, personalInfo.phone, personalInfo.location, personalInfo.linkedin].filter(Boolean).map((c, i) => (
+                    <span key={i}>{c}</span>
+                  ))}
+                  {!personalInfo.email && !personalInfo.phone && !personalInfo.location && !personalInfo.linkedin && (
+                    <span className="text-stone-400">email · phone · location</span>
+                  )}
+                </div>
+                <div className="border-t-2 border-stone-900 mb-4" />
 
-                  {/* Professional Summary */}
-                  {masterResult.summary && (
-                    <div className="mb-4">
+                {/* Sections rendered in dynamic order */}
+                {(t1SectionOrder || ['summary', 'experience', 'education', 'skills', ...extraSections.map(s => s.id)]).map(sectionId => {
+                  if (sectionId === 'summary') return (
+                    <div key="summary" className="mb-4">
                       <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Professional Summary</div>
                       <div className="border-t mb-2" style={{ borderColor: '#1F4E79' }} />
-                      {editingKey === 'summary' ? (
-                        <textarea
-                          autoFocus
-                          defaultValue={masterResult.summary}
-                          onBlur={e => {
-                            const v = e.target.value.trim();
-                            if (v) setMasterResult(prev => ({ ...prev, summary: v }));
-                            setEditingKey(null);
-                          }}
+                      {editingKey === 't-summary' ? (
+                        <textarea autoFocus defaultValue={tailoredDisplay.summary}
+                          onBlur={e => { const v = e.target.value.trim(); if (v) setResult(prev => ({ ...prev, summary: v })); setEditingKey(null); }}
                           onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
-                          rows={3}
-                          className="w-full text-sm border border-stone-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none leading-relaxed text-stone-700"
+                          rows={4} className="w-full text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none leading-relaxed text-stone-700"
                         />
                       ) : (
-                        <div className="flex items-start gap-2">
-                          <p
-                            className="flex-1 text-sm text-stone-700 leading-relaxed cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
-                            onClick={() => setEditingKey('summary')}
-                            title="Click to edit"
-                          >{masterResult.summary}</p>
-                          <button onClick={() => setEditingKey('summary')} className="flex-shrink-0 p-1 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit summary">
-                            <Pencil className="w-3 h-3" />
-                          </button>
+                        <div className="flex items-start gap-1.5">
+                          <p className="flex-1 text-xs text-stone-700 leading-relaxed cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors" onClick={() => setEditingKey('t-summary')} title="Click to edit">{tailoredDisplay.summary ? highlightText(tailoredDisplay.summary, hoveredKeyword) : <span className="text-stone-400 italic">No summary</span>}</p>
+                          <button onClick={() => setEditingKey('t-summary')} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit"><Pencil className="w-2.5 h-2.5" /></button>
                         </div>
                       )}
                     </div>
-                  )}
-
-                  {/* Work Experience */}
-                  <div className="mb-4">
-                    <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Work Experience</div>
-                    <div className="border-t mb-3" style={{ borderColor: '#1F4E79' }} />
-                    {masterResult.master_experiences.map((exp, expIdx) => (
-                      <div key={expIdx} className="mb-4">
-                        <div className="flex items-baseline justify-between">
-                          <span className="text-sm font-bold text-stone-900">{exp.role} | {exp.company}</span>
-                          <span className="text-xs text-stone-500 ml-2 flex-shrink-0">{exp.dates}</span>
-                        </div>
-                        <ul className="mt-1 space-y-1.5">
-                          {exp.bullets.map((b, bIdx) => {
-                          const key = `${expIdx}-${bIdx}`;
-                          const isEditing = editingKey === key;
-                          const isRefineOpen = refineKey === key;
-                          return (
-                            <li key={bIdx}>
-                              <div className="flex items-start gap-2 text-sm text-stone-800 leading-relaxed">
-                                <span className="text-stone-400 flex-shrink-0 mt-0.5">•</span>
-                                {isEditing ? (
-                                  <textarea
-                                    autoFocus
-                                    value={editingText}
-                                    onChange={e => setEditingText(e.target.value)}
-                                    onBlur={() => {
-                                      if (editingText.trim()) updateBullet(expIdx, bIdx, editingText.trim());
-                                      setEditingKey(null);
-                                    }}
-                                    onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
-                                    rows={2}
-                                    className="flex-1 text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
-                                  />
-                                ) : (
-                                  <span
-                                    className="flex-1 cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
-                                    onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
-                                    title="Click to edit"
-                                  >{b}</span>
-                                )}
-                                {!isEditing && (
-                                  <div className="flex items-center gap-1 flex-shrink-0">
-                                    <button
-                                      onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
-                                      className="p-1 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors"
-                                      title="Edit manually"
-                                    >
-                                      <Pencil className="w-3 h-3" />
-                                    </button>
-                                    <button
-                                      onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }}
-                                      className={`p-1 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`}
-                                      title="Refine with AI"
-                                    >
-                                      <Sparkles className="w-3 h-3" />
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-
-                              {isRefineOpen && (
-                                <div className="mt-2 ml-5 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-                                  <p className="text-xs text-amber-700 font-medium mb-2">What should change about this bullet?</p>
-                                  <div className="flex gap-2 items-center">
-                                    <input
-                                      autoFocus
-                                      type="text"
-                                      value={refinePrompt}
-                                      onChange={e => setRefinePrompt(e.target.value)}
-                                      onKeyDown={e => {
-                                        if (e.key === 'Enter') refineBullet(expIdx, bIdx, b);
-                                        if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); }
-                                      }}
-                                      placeholder="e.g. emphasize leadership, add more scope, make it punchier…"
-                                      className="flex-1 text-sm border border-amber-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
-                                    />
-                                    <button
-                                      onClick={() => refineBullet(expIdx, bIdx, b)}
-                                      disabled={isRefining || !refinePrompt.trim()}
-                                      className="px-3 py-2 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 transition-colors whitespace-nowrap"
-                                    >
-                                      {isRefining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                                      Rewrite
-                                    </button>
-                                    <button
-                                      onClick={() => { setRefineKey(null); setRefinePrompt(''); }}
-                                      className="p-2 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors"
-                                    >
-                                      <X className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-
-                  {/* Education — inline editable */}
-                  {masterResult.education?.length > 0 && (
-                    <div className="mb-4">
-                      <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Education</div>
+                  );
+                  if (sectionId === 'experience') return (
+                    <div key="experience" className="mb-4">
+                      <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Work Experience</div>
                       <div className="border-t mb-3" style={{ borderColor: '#1F4E79' }} />
-                      {masterResult.education.map((edu, i) => {
-                        const eKey = `edu-${i}`;
-                        const isEditingEdu = editingKey === eKey;
-                        return (
-                          <div key={i} className="mb-3 group flex items-start gap-2">
-                            {isEditingEdu ? (
-                              <div className="flex-1 grid grid-cols-2 gap-2">
-                                <input autoFocus defaultValue={`${edu.degree}${edu.field ? `, ${edu.field}` : ''}`}
-                                  placeholder="Degree, Field"
-                                  onBlur={e => setMasterResult(prev => {
-                                    const ed = [...prev.education];
-                                    const parts = e.target.value.split(',').map(s => s.trim());
-                                    ed[i] = { ...ed[i], degree: parts[0] || '', field: parts.slice(1).join(', ') || '' };
-                                    return { ...prev, education: ed };
-                                  })}
-                                  className="col-span-2 text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
-                                />
-                                <input defaultValue={edu.institution} placeholder="Institution"
-                                  onBlur={e => setMasterResult(prev => {
-                                    const ed = [...prev.education]; ed[i] = { ...ed[i], institution: e.target.value };
-                                    return { ...prev, education: ed };
-                                  })}
-                                  onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') setEditingKey(null); }}
-                                  className="text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
-                                />
-                                <input defaultValue={edu.dates} placeholder="Dates"
-                                  onBlur={e => { setMasterResult(prev => { const ed = [...prev.education]; ed[i] = { ...ed[i], dates: e.target.value }; return { ...prev, education: ed }; }); setEditingKey(null); }}
-                                  onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') setEditingKey(null); }}
-                                  className="text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
-                                />
-                              </div>
-                            ) : (
-                              <div className="flex-1">
-                                <div className="flex items-baseline justify-between">
-                                  <span className="text-sm font-bold text-stone-900">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</span>
-                                  <span className="text-xs text-stone-500 ml-2 flex-shrink-0">{edu.dates}</span>
-                                </div>
-                                <div className="text-sm text-stone-500 mt-0.5">{edu.institution}</div>
-                              </div>
-                            )}
-                            {!isEditingEdu && (
-                              <button onClick={() => setEditingKey(eKey)} className="flex-shrink-0 p-1 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors opacity-0 group-hover:opacity-100" title="Edit">
-                                <Pencil className="w-3 h-3" />
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Skills — editable chips */}
-                  <div className="mb-2">
-                    <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Skills</div>
-                    <div className="border-t mb-2" style={{ borderColor: '#1F4E79' }} />
-                    <div className="flex flex-wrap gap-1.5 items-center">
-                      {(masterResult.skills ?? []).map((skill, i) => (
-                        <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-stone-100 rounded text-xs text-stone-700 group">
-                          {skill}
-                          <button onClick={() => setMasterResult(prev => ({ ...prev, skills: prev.skills.filter((_, si) => si !== i) }))}
-                            className="text-stone-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
-                            <X className="w-2.5 h-2.5" />
-                          </button>
-                        </span>
-                      ))}
-                      <input
-                        value={newSkill}
-                        onChange={e => setNewSkill(e.target.value)}
-                        onKeyDown={e => {
-                          if ((e.key === 'Enter' || e.key === ',') && newSkill.trim()) {
-                            e.preventDefault();
-                            setMasterResult(prev => ({ ...prev, skills: [...(prev.skills ?? []), newSkill.trim()] }));
-                            setNewSkill('');
-                          }
-                          if (e.key === 'Escape') setNewSkill('');
-                        }}
-                        placeholder="+ Add skill"
-                        className="text-xs border border-dashed border-stone-300 rounded px-2 py-0.5 focus:outline-none focus:border-stone-500 w-24 text-stone-500 placeholder-stone-300"
-                      />
-                    </div>
-                  </div>
-
-                </div>
-                )}{/* end template1 */}
-
-                {/* ── TEMPLATE 2: Two-column layout ── */}
-                {selectedTemplate === 'template2' && (
-                <div className="px-8 py-7">
-
-                  {/* T2 Header */}
-                  <div className="mb-4">
-                    <div className="font-black text-stone-900 uppercase tracking-tight" style={{ fontSize: '1.9rem', lineHeight: 1.1 }}>
-                      {personalInfo.name || 'YOUR NAME'}
-                    </div>
-                    <div className="text-sm font-semibold mt-1 mb-2" style={{ color: '#1F4E79' }}>
-                      {personalInfo.title || 'Your Professional Title'}
-                    </div>
-                    <div className="flex flex-wrap gap-4 text-xs text-stone-600">
-                      {personalInfo.phone ? <span>{personalInfo.phone}</span> : null}
-                      {personalInfo.email ? <span>{personalInfo.email}</span> : null}
-                      {personalInfo.linkedin ? <span>{personalInfo.linkedin}</span> : null}
-                      {personalInfo.location ? <span>{personalInfo.location}</span> : null}
-                      {!personalInfo.phone && !personalInfo.email && !personalInfo.linkedin && !personalInfo.location && (
-                        <span className="text-stone-400">000-000-0000 · you@email.com · LinkedIn · City, State</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="border-b border-stone-300 mb-4" />
-
-                  {/* T2 Two-column body */}
-                  <div className="flex gap-7">
-
-                    {/* LEFT: Experience */}
-                    <div style={{ flex: '0 0 54%' }}>
-                      <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Experience</div>
-                      <div className="border-t mb-3 border-stone-800" />
-                      {masterResult.master_experiences.map((exp, expIdx) => (
+                      {tailoredDisplay.master_experiences.map((exp, expIdx) => (
                         <div key={expIdx} className="mb-4">
-                          <div className="text-sm font-bold text-stone-900">{exp.role}</div>
-                          <div className="text-xs font-semibold" style={{ color: '#1F4E79' }}>{exp.company}</div>
-                          <div className="text-xs text-stone-500 mb-1.5">{exp.dates}</div>
-                          <ul className="space-y-1">
+                          <div className="flex items-baseline justify-between">
+                            <div className="text-sm font-bold text-stone-900">
+                              {editingKey === `t-role-${expIdx}` ? (
+                                <span className="flex items-baseline gap-1.5">
+                                  <input autoFocus type="text" value={editingText} onChange={e => setEditingText(e.target.value)}
+                                    onBlur={() => { if (editingText.trim()) updateTailoredRole(expIdx, editingText.trim()); setEditingKey(null); }}
+                                    onKeyDown={e => { if (e.key === 'Enter') { if (editingText.trim()) updateTailoredRole(expIdx, editingText.trim()); setEditingKey(null); } if (e.key === 'Escape') setEditingKey(null); }}
+                                    className="font-bold text-stone-900 border-b border-stone-400 focus:outline-none bg-transparent text-sm min-w-0 w-44"
+                                  />
+                                  <span className="text-stone-500">| {exp.company}</span>
+                                </span>
+                              ) : (
+                                <span className="flex items-baseline gap-1 group">
+                                  <span>{exp.role || <span className="font-normal italic text-stone-400 text-xs">Add role</span>}</span>
+                                  <button onClick={() => { setEditingKey(`t-role-${expIdx}`); setEditingText(exp.role || ''); setRefineKey(null); }} className="p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors opacity-0 group-hover:opacity-100" title="Edit role"><Pencil className="w-2.5 h-2.5" /></button>
+                                  <span>| {exp.company}</span>
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-stone-500 ml-2 whitespace-nowrap">{exp.dates}</div>
+                          </div>
+                          <ul className="mt-1.5 space-y-1">
                             {exp.bullets.map((b, bIdx) => {
-                              const key = `${expIdx}-${bIdx}`;
+                              const key = `t-${expIdx}-${bIdx}`;
                               const isEditing = editingKey === key;
                               const isRefineOpen = refineKey === key;
                               return (
                                 <li key={bIdx}>
-                                  <div className="flex items-start gap-1.5 text-xs text-stone-800 leading-relaxed">
+                                  <div className="flex items-start gap-2 text-sm text-stone-800 leading-relaxed">
                                     <span className="text-stone-400 flex-shrink-0 mt-0.5">•</span>
                                     {isEditing ? (
-                                      <textarea
-                                        autoFocus
-                                        value={editingText}
-                                        onChange={e => setEditingText(e.target.value)}
-                                        onBlur={() => {
-                                          if (editingText.trim()) updateBullet(expIdx, bIdx, editingText.trim());
-                                          setEditingKey(null);
-                                        }}
-                                        onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
-                                        rows={2}
-                                        className="flex-1 text-xs border border-stone-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
-                                      />
+                                      <div className="flex-1 flex flex-col gap-1">
+                                        <div>
+                                          <button onMouseDown={e => { e.preventDefault(); applyBold(); }} className="px-2 py-0.5 text-xs font-bold border border-stone-300 rounded hover:bg-stone-100 text-stone-700 leading-none" title="Bold — select text then click, or click to insert **">B</button>
+                                        </div>
+                                        <textarea autoFocus ref={textareaRef} value={editingText} onChange={e => setEditingText(e.target.value)}
+                                          onBlur={() => { if (editingText.trim()) updateTailoredBullet(expIdx, bIdx, editingText.trim()); setEditingKey(null); }}
+                                          onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                                          rows={2} className="text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
+                                        />
+                                      </div>
                                     ) : (
-                                      <span
-                                        className="flex-1 cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
-                                        onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
-                                        title="Click to edit"
-                                      >{b}</span>
+                                      <span className="flex-1 cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors" onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }} title="Click to edit">{renderBullet(b, hoveredKeyword)}</span>
                                     )}
                                     {!isEditing && (
-                                      <div className="flex items-center gap-0.5 flex-shrink-0">
-                                        <button
-                                          onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
-                                          className="p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors"
-                                          title="Edit manually"
-                                        >
-                                          <Pencil className="w-2.5 h-2.5" />
-                                        </button>
-                                        <button
-                                          onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }}
-                                          className={`p-0.5 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`}
-                                          title="Refine with AI"
-                                        >
-                                          <Sparkles className="w-2.5 h-2.5" />
-                                        </button>
+                                      <div className="flex items-center gap-1 flex-shrink-0">
+                                        <button onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }} className="p-1 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors" title="Edit manually"><Pencil className="w-3 h-3" /></button>
+                                        <button onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }} className={`p-1 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`} title="Refine with AI"><Sparkles className="w-3 h-3" /></button>
                                       </div>
                                     )}
                                   </div>
                                   {isRefineOpen && (
-                                    <div className="mt-1.5 ml-4 p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
-                                      <p className="text-xs text-amber-700 font-medium mb-1.5">What should change?</p>
-                                      <div className="flex gap-1.5 items-center">
-                                        <input
-                                          autoFocus
-                                          type="text"
-                                          value={refinePrompt}
-                                          onChange={e => setRefinePrompt(e.target.value)}
-                                          onKeyDown={e => {
-                                            if (e.key === 'Enter') refineBullet(expIdx, bIdx, b);
-                                            if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); }
-                                          }}
-                                          placeholder="e.g. more impact, stronger verb…"
-                                          className="flex-1 text-xs border border-amber-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
+                                    <div className="mt-2 ml-5 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                                      <p className="text-xs text-amber-700 font-medium mb-2">What should change about this bullet?</p>
+                                      <div className="flex gap-2 items-center">
+                                        <input autoFocus type="text" value={refinePrompt} onChange={e => setRefinePrompt(e.target.value)}
+                                          onKeyDown={e => { if (e.key === 'Enter') refineTailoredBullet(expIdx, bIdx, b); if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); } }}
+                                          placeholder="e.g. emphasize leadership, add more scope…"
+                                          className="flex-1 text-sm border border-amber-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
                                         />
-                                        <button
-                                          onClick={() => refineBullet(expIdx, bIdx, b)}
-                                          disabled={isRefining || !refinePrompt.trim()}
-                                          className="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors whitespace-nowrap"
-                                        >
-                                          {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                                          Rewrite
+                                        <button onClick={() => refineTailoredBullet(expIdx, bIdx, b)} disabled={isRefining || !refinePrompt.trim()} className="px-3 py-2 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 transition-colors whitespace-nowrap">
+                                          {isRefining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Rewrite
                                         </button>
-                                        <button
-                                          onClick={() => { setRefineKey(null); setRefinePrompt(''); }}
-                                          className="p-1.5 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors"
-                                        >
-                                          <X className="w-3 h-3" />
-                                        </button>
+                                        <button onClick={() => { setRefineKey(null); setRefinePrompt(''); }} className="p-2 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors"><X className="w-3.5 h-3.5" /></button>
                                       </div>
                                     </div>
                                   )}
@@ -1489,355 +1488,339 @@ OUTPUT (return ONLY this JSON, no markdown):
                         </div>
                       ))}
                     </div>
+                  );
+                  if (sectionId === 'education') {
+                    if (!tailoredDisplay.education?.length) return null;
+                    return (
+                      <div key="education" className="mb-4">
+                        <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Education</div>
+                        <div className="border-t mb-3" style={{ borderColor: '#1F4E79' }} />
+                        {tailoredDisplay.education.map((edu, i) => (
+                          <div key={i} className="mb-2">
+                            <div className="flex items-baseline justify-between">
+                              <div className="text-sm font-bold text-stone-900">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</div>
+                              <div className="text-xs text-stone-500">{edu.dates}</div>
+                            </div>
+                            <div className="text-xs" style={{ color: '#1F4E79' }}>{edu.institution}</div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+                  if (sectionId === 'skills') return (
+                    <div key="skills">
+                      <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Skills</div>
+                      <div className="border-t mb-2" style={{ borderColor: '#1F4E79' }} />
+                      <div className="flex flex-wrap gap-1 items-center">
+                        {(tailoredDisplay.skills ?? []).map((skill, i) => (
+                          <span key={i} className="inline-flex items-center gap-0.5 text-xs text-stone-700 group mr-1.5">
+                            {highlightText(skill, hoveredKeyword)}
+                            <button onClick={() => setResult(prev => ({ ...prev, skills: prev.skills.filter((_, si) => si !== i) }))} className="text-stone-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><X className="w-2 h-2" /></button>
+                          </span>
+                        ))}
+                        <input value={tailoredNewSkill} onChange={e => setTailoredNewSkill(e.target.value)}
+                          onKeyDown={e => { if ((e.key === 'Enter' || e.key === ',') && tailoredNewSkill.trim()) { e.preventDefault(); setResult(prev => ({ ...prev, skills: [...(prev.skills ?? []), tailoredNewSkill.trim()] })); setTailoredNewSkill(''); } if (e.key === 'Escape') setTailoredNewSkill(''); }}
+                          placeholder="+ Add skill" className="text-xs border border-dashed border-stone-300 rounded px-1.5 py-0.5 focus:outline-none focus:border-stone-500 w-20 text-stone-500 placeholder-stone-300"
+                        />
+                      </div>
+                    </div>
+                  );
+                  const sec = extraSections.find(s => s.id === sectionId);
+                  if (!sec) return null;
+                  return (
+                    <div key={sectionId} className="mt-4 group">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-xs font-bold uppercase tracking-widest" style={{ color: '#1F4E79' }}>{sec.name}</div>
+                        <button onClick={() => deleteCustomSection(sectionId)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-50 text-stone-300 hover:text-red-500 transition-all"><X className="w-3 h-3" /></button>
+                      </div>
+                      <div className="border-t mb-2" style={{ borderColor: '#1F4E79' }} />
+                      <div className="flex items-start justify-between gap-3">
+                        <ul className="list-disc pl-4 flex-1 space-y-0.5">
+                          {sec.bullets.map((b, bi) => <li key={bi} className="text-xs text-stone-700 leading-relaxed">{b}</li>)}
+                        </ul>
+                        {(sec.from || sec.to) && <span className="text-xs text-stone-500 whitespace-nowrap ml-2">{[sec.from, sec.to].filter(Boolean).join(' – ')}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
 
-                    {/* RIGHT: Summary, Education, Key Achievements, Skills */}
-                    <div style={{ flex: 1 }}>
+                <div className="mt-5 pt-3 border-t border-dashed border-stone-200">
+                  <button onClick={() => setShowAddSection(true)}
+                    className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-700 transition-colors">
+                    <span className="w-4 h-4 rounded border border-dashed border-stone-300 flex items-center justify-center font-bold leading-none">+</span>
+                    Add section
+                  </button>
+                </div>
+              </div>
+              )}{/* end tailored t1 */}
 
-                      {/* T2 Summary */}
-                      {masterResult.summary && (
-                        <div className="mb-4">
-                          <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Summary</div>
-                          <div className="border-t mb-2 border-stone-800" />
-                          {editingKey === 'summary' ? (
-                            <textarea
-                              autoFocus
-                              defaultValue={masterResult.summary}
-                              onBlur={e => {
-                                const v = e.target.value.trim();
-                                if (v) setMasterResult(prev => ({ ...prev, summary: v }));
-                                setEditingKey(null);
-                              }}
-                              onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
-                              rows={4}
-                              className="w-full text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none leading-relaxed text-stone-700"
+              {selectedTailoredTemplate === 'template2' && (
+              <div className="px-8 py-7">
+                {/* T2 Header */}
+                <div className="mb-4">
+                  <div className="font-black text-stone-900 uppercase tracking-tight" style={{ fontSize: '1.9rem', lineHeight: 1.1 }}>
+                    {personalInfo.name || 'YOUR NAME'}
+                  </div>
+                  <div className="text-sm font-semibold mt-1 mb-2" style={{ color: '#1F4E79' }}>
+                    {personalInfo.title || 'Your Professional Title'}
+                  </div>
+                  <div className="flex flex-wrap gap-4 text-xs text-stone-600">
+                    {personalInfo.phone ? <span>{personalInfo.phone}</span> : null}
+                    {personalInfo.email ? <span>{personalInfo.email}</span> : null}
+                    {personalInfo.linkedin ? <span>{personalInfo.linkedin}</span> : null}
+                    {personalInfo.location ? <span>{personalInfo.location}</span> : null}
+                    {!personalInfo.phone && !personalInfo.email && !personalInfo.linkedin && !personalInfo.location && (
+                      <span className="text-stone-400">000-000-0000 · you@email.com · LinkedIn · City, State</span>
+                    )}
+                  </div>
+                </div>
+                <div className="border-b border-stone-300 mb-4" />
+
+                {/* T2 Two-column body */}
+                <div className="flex gap-7">
+                  {/* LEFT: Experience */}
+                  <div style={{ flex: '0 0 54%' }}>
+                    <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Experience</div>
+                    <div className="border-t mb-3 border-stone-800" />
+                    {tailoredDisplay.master_experiences.map((exp, expIdx) => (
+                      <div key={expIdx} className="mb-4">
+                        <div className="text-sm font-bold text-stone-900">
+                          {editingKey === `t-role-${expIdx}` ? (
+                            <input autoFocus type="text" value={editingText} onChange={e => setEditingText(e.target.value)}
+                              onBlur={() => { if (editingText.trim()) updateTailoredRole(expIdx, editingText.trim()); setEditingKey(null); }}
+                              onKeyDown={e => { if (e.key === 'Enter') { if (editingText.trim()) updateTailoredRole(expIdx, editingText.trim()); setEditingKey(null); } if (e.key === 'Escape') setEditingKey(null); }}
+                              className="font-bold text-stone-900 border-b border-stone-400 focus:outline-none bg-transparent text-sm w-full"
                             />
                           ) : (
-                            <div className="flex items-start gap-1.5">
-                              <p
-                                className="flex-1 text-xs text-stone-700 leading-relaxed cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
-                                onClick={() => setEditingKey('summary')}
-                                title="Click to edit"
-                              >{masterResult.summary}</p>
-                              <button onClick={() => setEditingKey('summary')} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit">
-                                <Pencil className="w-2.5 h-2.5" />
-                              </button>
-                            </div>
+                            <span className="flex items-baseline gap-1 group">
+                              <span>{exp.role || <span className="font-normal italic text-stone-400 text-xs">Add role</span>}</span>
+                              <button onClick={() => { setEditingKey(`t-role-${expIdx}`); setEditingText(exp.role || ''); setRefineKey(null); }} className="p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors opacity-0 group-hover:opacity-100" title="Edit role"><Pencil className="w-2.5 h-2.5" /></button>
+                            </span>
                           )}
                         </div>
-                      )}
-
-                      {/* T2 Education */}
-                      {masterResult.education?.length > 0 && (
-                        <div className="mb-4">
-                          <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Education</div>
-                          <div className="border-t mb-2 border-stone-800" />
-                          {masterResult.education.map((edu, i) => {
-                            const eKey = `edu-${i}`;
-                            const isEditingEdu = editingKey === eKey;
+                        <div className="text-xs font-semibold" style={{ color: '#1F4E79' }}>{exp.company}</div>
+                        <div className="text-xs text-stone-500 mb-1.5">{exp.dates}</div>
+                        <ul className="space-y-1">
+                          {exp.bullets.map((b, bIdx) => {
+                            const key = `t-${expIdx}-${bIdx}`;
+                            const isEditing = editingKey === key;
+                            const isRefineOpen = refineKey === key;
                             return (
-                              <div key={i} className="mb-2 group flex items-start gap-1.5">
-                                {isEditingEdu ? (
-                                  <div className="flex-1 grid grid-cols-1 gap-1.5">
-                                    <input autoFocus defaultValue={`${edu.degree}${edu.field ? `, ${edu.field}` : ''}`}
-                                      placeholder="Degree, Field"
-                                      onBlur={e => setMasterResult(prev => {
-                                        const ed = [...prev.education];
-                                        const parts = e.target.value.split(',').map(s => s.trim());
-                                        ed[i] = { ...ed[i], degree: parts[0] || '', field: parts.slice(1).join(', ') || '' };
-                                        return { ...prev, education: ed };
-                                      })}
-                                      className="text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
-                                    />
-                                    <input defaultValue={edu.institution} placeholder="Institution"
-                                      onBlur={e => setMasterResult(prev => {
-                                        const ed = [...prev.education]; ed[i] = { ...ed[i], institution: e.target.value };
-                                        return { ...prev, education: ed };
-                                      })}
-                                      onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') setEditingKey(null); }}
-                                      className="text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
-                                    />
-                                    <input defaultValue={edu.dates} placeholder="Dates"
-                                      onBlur={e => { setMasterResult(prev => { const ed = [...prev.education]; ed[i] = { ...ed[i], dates: e.target.value }; return { ...prev, education: ed }; }); setEditingKey(null); }}
-                                      onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') setEditingKey(null); }}
-                                      className="text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
-                                    />
-                                  </div>
-                                ) : (
-                                  <div className="flex-1">
-                                    <div className="text-xs font-bold text-stone-900">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</div>
-                                    <div className="text-xs font-semibold" style={{ color: '#1F4E79' }}>{edu.institution}</div>
-                                    <div className="text-xs text-stone-500 mt-0.5">{edu.dates}</div>
+                              <li key={bIdx}>
+                                <div className="flex items-start gap-1.5 text-xs text-stone-800 leading-relaxed">
+                                  <span className="text-stone-400 flex-shrink-0 mt-0.5">•</span>
+                                  {isEditing ? (
+                                    <div className="flex-1 flex flex-col gap-0.5">
+                                      <div>
+                                        <button onMouseDown={e => { e.preventDefault(); applyBold(); }} className="px-1.5 py-0.5 text-xs font-bold border border-stone-300 rounded hover:bg-stone-100 text-stone-700 leading-none" title="Bold — select text then click, or click to insert **">B</button>
+                                      </div>
+                                      <textarea autoFocus ref={textareaRef} value={editingText} onChange={e => setEditingText(e.target.value)}
+                                        onBlur={() => { if (editingText.trim()) updateTailoredBullet(expIdx, bIdx, editingText.trim()); setEditingKey(null); }}
+                                        onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                                        rows={2} className="text-xs border border-stone-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
+                                      />
+                                    </div>
+                                  ) : (
+                                    <span className="flex-1 cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors" onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }} title="Click to edit">{renderBullet(b, hoveredKeyword)}</span>
+                                  )}
+                                  {!isEditing && (
+                                    <div className="flex items-center gap-0.5 flex-shrink-0">
+                                      <button onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }} className="p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors" title="Edit manually"><Pencil className="w-2.5 h-2.5" /></button>
+                                      <button onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }} className={`p-0.5 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`} title="Refine with AI"><Sparkles className="w-2.5 h-2.5" /></button>
+                                    </div>
+                                  )}
+                                </div>
+                                {isRefineOpen && (
+                                  <div className="mt-1.5 ml-4 p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                                    <p className="text-xs text-amber-700 font-medium mb-1.5">What should change?</p>
+                                    <div className="flex gap-1.5 items-center">
+                                      <input autoFocus type="text" value={refinePrompt} onChange={e => setRefinePrompt(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') refineTailoredBullet(expIdx, bIdx, b); if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); } }}
+                                        placeholder="e.g. more impact, stronger verb…"
+                                        className="flex-1 text-xs border border-amber-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
+                                      />
+                                      <button onClick={() => refineTailoredBullet(expIdx, bIdx, b)} disabled={isRefining || !refinePrompt.trim()} className="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors whitespace-nowrap">
+                                        {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Rewrite
+                                      </button>
+                                      <button onClick={() => { setRefineKey(null); setRefinePrompt(''); }} className="p-1.5 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors"><X className="w-3 h-3" /></button>
+                                    </div>
                                   </div>
                                 )}
-                                {!isEditingEdu && (
-                                  <button onClick={() => setEditingKey(eKey)} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors opacity-0 group-hover:opacity-100" title="Edit">
-                                    <Pencil className="w-2.5 h-2.5" />
-                                  </button>
-                                )}
-                              </div>
+                              </li>
                             );
                           })}
-                        </div>
-                      )}
-
-                      {/* T2 Key Achievements — auto from top 2 roles' first bullets */}
-                      {masterResult.master_experiences?.length > 0 && masterResult.master_experiences[0]?.bullets?.length > 0 && (
-                        <div className="mb-4">
-                          <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Key Achievements</div>
-                          <div className="border-t mb-2 border-stone-800" />
-                          {masterResult.master_experiences.slice(0, 2).map((exp, i) => exp.bullets[0] && (
-                            <div key={i} className="mb-2">
-                              <div className="text-xs font-bold text-stone-900">{exp.company}</div>
-                              <div className="text-xs text-stone-600 leading-relaxed mt-0.5">{exp.bullets[0]}</div>
-                            </div>
-                          ))}
-                          <p className="text-xs text-stone-400 italic mt-1">Mirrors top bullet per role · edit bullets to update</p>
-                        </div>
-                      )}
-
-                      {/* T2 Skills — same editable chips */}
-                      <div className="mb-2">
-                        <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Skills</div>
-                        <div className="border-t mb-2 border-stone-800" />
-                        <div className="flex flex-wrap gap-1 items-center">
-                          {(masterResult.skills ?? []).map((skill, i) => (
-                            <span key={i} className="inline-flex items-center gap-0.5 text-xs text-stone-700 group mr-1.5">
-                              {skill}
-                              <button onClick={() => setMasterResult(prev => ({ ...prev, skills: prev.skills.filter((_, si) => si !== i) }))}
-                                className="text-stone-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
-                                <X className="w-2 h-2" />
-                              </button>
-                            </span>
-                          ))}
-                          <input
-                            value={newSkill}
-                            onChange={e => setNewSkill(e.target.value)}
-                            onKeyDown={e => {
-                              if ((e.key === 'Enter' || e.key === ',') && newSkill.trim()) {
-                                e.preventDefault();
-                                setMasterResult(prev => ({ ...prev, skills: [...(prev.skills ?? []), newSkill.trim()] }));
-                                setNewSkill('');
-                              }
-                              if (e.key === 'Escape') setNewSkill('');
-                            }}
-                            placeholder="+ Add skill"
-                            className="text-xs border border-dashed border-stone-300 rounded px-1.5 py-0.5 focus:outline-none focus:border-stone-500 w-20 text-stone-500 placeholder-stone-300"
-                          />
-                        </div>
+                        </ul>
                       </div>
+                    ))}
+                  </div>
 
-                    </div>{/* end right col */}
-                  </div>{/* end two-col */}
-                </div>
-                )}{/* end template2 */}
+                  {/* RIGHT: sections in dynamic order */}
+                  <div style={{ flex: 1 }}>
+                    {(t2SectionOrder || ['experience', 'summary', 'education', 'achievements', 'skills', ...extraSections.map(s => s.id)])
+                      .filter(id => id !== 'experience')
+                      .map(sectionId => {
+                        if (sectionId === 'summary') return (
+                          <div key="summary" className="mb-4">
+                            <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Summary</div>
+                            <div className="border-t mb-2 border-stone-800" />
+                            {editingKey === 't-summary' ? (
+                              <textarea autoFocus defaultValue={tailoredDisplay.summary}
+                                onBlur={e => { const v = e.target.value.trim(); if (v) setResult(prev => ({ ...prev, summary: v })); setEditingKey(null); }}
+                                onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                                rows={4} className="w-full text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none leading-relaxed text-stone-700"
+                              />
+                            ) : (
+                              <div className="flex items-start gap-1.5">
+                                <p className="flex-1 text-xs text-stone-700 leading-relaxed">{tailoredDisplay.summary ? highlightText(tailoredDisplay.summary, hoveredKeyword) : <span className="text-stone-400 italic">No summary</span>}</p>
+                                <button onClick={() => setEditingKey('t-summary')} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit"><Pencil className="w-2.5 h-2.5" /></button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                        if (sectionId === 'education') {
+                          if (!tailoredDisplay.education?.length) return null;
+                          return (
+                            <div key="education" className="mb-4">
+                              <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Education</div>
+                              <div className="border-t mb-2 border-stone-800" />
+                              {tailoredDisplay.education.map((edu, i) => (
+                                <div key={i} className="mb-2">
+                                  <div className="text-xs font-bold text-stone-900">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</div>
+                                  <div className="text-xs font-semibold" style={{ color: '#1F4E79' }}>{edu.institution}</div>
+                                  <div className="text-xs text-stone-500 mt-0.5">{edu.dates}</div>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        }
+                        if (sectionId === 'achievements') {
+                          if (!tailoredDisplay.master_experiences?.length || !tailoredDisplay.master_experiences[0]?.bullets?.length) return null;
+                          return (
+                            <div key="achievements" className="mb-4">
+                              <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Key Achievements</div>
+                              <div className="border-t mb-2 border-stone-800" />
+                              {tailoredDisplay.master_experiences.slice(0, 2).map((exp, i) => {
+                                if (!exp.bullets[0]) return null;
+                                const key = `t-${i}-0`;
+                                const isEditing = editingKey === key;
+                                const isRefineOpen = refineKey === key;
+                                return (
+                                  <div key={i} className="mb-2">
+                                    <div className="text-xs font-bold text-stone-900">{exp.company}</div>
+                                    <div className="flex items-start gap-1.5 mt-0.5">
+                                      {isEditing ? (
+                                        <div className="flex-1 flex flex-col gap-0.5">
+                                          <div><button onMouseDown={e => { e.preventDefault(); applyBold(); }} className="px-1.5 py-0.5 text-xs font-bold border border-stone-300 rounded hover:bg-stone-100 text-stone-700 leading-none" title="Bold">B</button></div>
+                                          <textarea autoFocus ref={textareaRef} value={editingText} onChange={e => setEditingText(e.target.value)}
+                                            onBlur={() => { if (editingText.trim()) updateTailoredBullet(i, 0, editingText.trim()); setEditingKey(null); }}
+                                            onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
+                                            rows={2} className="text-xs border border-stone-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
+                                          />
+                                        </div>
+                                      ) : (
+                                        <span className="flex-1 text-xs text-stone-600 leading-relaxed">{renderBullet(exp.bullets[0], hoveredKeyword)}</span>
+                                      )}
+                                      {!isEditing && (
+                                        <div className="flex items-center gap-0.5 flex-shrink-0">
+                                          <button onClick={() => { setEditingKey(key); setEditingText(exp.bullets[0]); setRefineKey(null); }} className="p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors" title="Edit manually"><Pencil className="w-2.5 h-2.5" /></button>
+                                          <button onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }} className={`p-0.5 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`} title="Refine with AI"><Sparkles className="w-2.5 h-2.5" /></button>
+                                        </div>
+                                      )}
+                                    </div>
+                                    {isRefineOpen && (
+                                      <div className="mt-1.5 p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                                        <p className="text-xs text-amber-700 font-medium mb-1.5">What should change?</p>
+                                        <div className="flex gap-1.5 items-center">
+                                          <input autoFocus type="text" value={refinePrompt} onChange={e => setRefinePrompt(e.target.value)}
+                                            onKeyDown={e => { if (e.key === 'Enter') refineTailoredBullet(i, 0, exp.bullets[0]); if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); } }}
+                                            placeholder="e.g. more impact, stronger verb…"
+                                            className="flex-1 text-xs border border-amber-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
+                                          />
+                                          <button onClick={() => refineTailoredBullet(i, 0, exp.bullets[0])} disabled={isRefining || !refinePrompt.trim()} className="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors whitespace-nowrap">
+                                            {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Rewrite
+                                          </button>
+                                          <button onClick={() => { setRefineKey(null); setRefinePrompt(''); }} className="p-1.5 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors"><X className="w-3 h-3" /></button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        }
+                        if (sectionId === 'skills') return (
+                          <div key="skills" className="mb-2">
+                            <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Skills</div>
+                            <div className="border-t mb-2 border-stone-800" />
+                            <div className="flex flex-wrap gap-1 items-center">
+                              {(tailoredDisplay.skills ?? []).map((skill, i) => (
+                                <span key={i} className="inline-flex items-center gap-0.5 text-xs text-stone-700 group mr-1.5">
+                                  {highlightText(skill, hoveredKeyword)}
+                                  <button onClick={() => setResult(prev => ({ ...prev, skills: prev.skills.filter((_, si) => si !== i) }))} className="text-stone-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><X className="w-2 h-2" /></button>
+                                </span>
+                              ))}
+                              <input value={tailoredNewSkill} onChange={e => setTailoredNewSkill(e.target.value)}
+                                onKeyDown={e => { if ((e.key === 'Enter' || e.key === ',') && tailoredNewSkill.trim()) { e.preventDefault(); setResult(prev => ({ ...prev, skills: [...(prev.skills ?? []), tailoredNewSkill.trim()] })); setTailoredNewSkill(''); } if (e.key === 'Escape') setTailoredNewSkill(''); }}
+                                placeholder="+ Add skill" className="text-xs border border-dashed border-stone-300 rounded px-1.5 py-0.5 focus:outline-none focus:border-stone-500 w-20 text-stone-500 placeholder-stone-300"
+                              />
+                            </div>
+                          </div>
+                        );
+                        const sec = extraSections.find(s => s.id === sectionId);
+                        if (!sec) return null;
+                        return (
+                          <div key={sectionId} className="mb-4 group">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="text-xs font-bold uppercase tracking-widest text-stone-900">{sec.name}</div>
+                              <button onClick={() => deleteCustomSection(sectionId)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-50 text-stone-300 hover:text-red-500 transition-all"><X className="w-3 h-3" /></button>
+                            </div>
+                            <div className="border-t mb-2 border-stone-800" />
+                            <div className="flex items-start justify-between gap-2">
+                              <ul className="list-disc pl-4 flex-1 space-y-0.5">
+                                {sec.bullets.map((b, bi) => <li key={bi} className="text-xs text-stone-600 leading-relaxed">{b}</li>)}
+                              </ul>
+                              {(sec.from || sec.to) && <span className="text-xs text-stone-500 whitespace-nowrap ml-2">{[sec.from, sec.to].filter(Boolean).join(' – ')}</span>}
+                            </div>
+                          </div>
+                        );
+                      })}
 
-                </div>{/* end template preview outer */}
-
-                <div className="border-t border-stone-200 px-6 py-5 bg-stone-50">
-                  <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-3">Rewrite entire resume with AI</p>
-                  <div className="flex gap-2 items-center">
-                    <input
-                      type="text"
-                      value={docRefinePrompt}
-                      onChange={e => setDocRefinePrompt(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') refineDocument();
-                      }}
-                      placeholder="e.g. make all bullets more concise, lead with impact everywhere, use stronger verbs…"
-                      className="flex-1 text-sm border border-stone-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-stone-400 bg-white"
-                    />
-                    <button
-                      onClick={refineDocument}
-                      disabled={isDocRefining || !docRefinePrompt.trim()}
-                      className="px-4 py-2.5 bg-stone-900 text-stone-50 rounded-lg text-sm font-medium hover:bg-stone-800 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-colors whitespace-nowrap"
-                    >
-                      {isDocRefining ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                      {isDocRefining ? 'Rewriting…' : 'Rewrite'}
-                    </button>
+                    <div className="mt-2 pt-3 border-t border-dashed border-stone-200">
+                      <button onClick={() => setShowAddSection(true)}
+                        className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-700 transition-colors">
+                        <span className="w-4 h-4 rounded border border-dashed border-stone-300 flex items-center justify-center font-bold leading-none">+</span>
+                        Add section
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
-            )}
-          </div>
-        )}
+              )}{/* end tailored t2 */}
 
-        {/* ── TAILOR FOR A ROLE ── */}
-        {mode === 'tailor' && (
-        <div>
-        <div className="mb-10 max-w-3xl">
-          <h2 className="display-font text-4xl font-semibold text-stone-900 leading-tight mb-3">
-            Tailor. Score. <span className="text-stone-400">Apply.</span>
-          </h2>
-          <p className="text-stone-600 leading-relaxed">
-            Generate tailored bullets, see your ATS match score, then close the loop with one click — pick the Quick Wins you want and regenerate.
-          </p>
-        </div>
+              </div>{/* end template preview */}
+            </div>{/* end resume preview card */}
+            </div>{/* end left col */}
 
-        <div className="grid md:grid-cols-2 gap-5 mb-6">
-          <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-stone-200 flex items-center gap-2">
-              <Briefcase className="w-4 h-4 text-stone-500" />
-              <h3 className="text-sm font-semibold text-stone-900">Master Resume</h3>
-              {masterResult && (
-                <button
-                  onClick={() => setMasterResume(masterResultToPlainText(masterResult))}
-                  className="ml-1 px-2 py-0.5 text-xs font-medium text-stone-600 border border-stone-200 hover:bg-stone-50 rounded-md transition-colors flex items-center gap-1"
-                  title="Pre-fill from your built master resume"
-                >
-                  <FileText className="w-3 h-3" /> Use master resume
-                </button>
-              )}
-              <span className="text-xs text-stone-400 ml-auto">{masterResume.length} chars</span>
-            </div>
-            <textarea
-              value={masterResume}
-              onChange={(e) => setMasterResume(e.target.value)}
-              placeholder="Paste your complete master resume here."
-              className="w-full h-72 p-5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none resize-none"
-              style={{ fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace', fontSize: '13px', lineHeight: '1.6' }}
-            />
-          </div>
+            {/* RIGHT: ATS + Feedback */}
+            <div
+              className={`space-y-4 ${layoutMode === 'split' ? 'lg:w-[420px] lg:flex-shrink-0 lg:sticky lg:top-[65px]' : 'w-full'}`}
+              style={layoutMode === 'split' ? { overflowY: 'auto', maxHeight: 'calc(100vh - 75px)' } : {}}
+            >
 
-          <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-stone-200 flex items-center gap-2">
-              <Target className="w-4 h-4 text-stone-500" />
-              <h3 className="text-sm font-semibold text-stone-900">Job Description</h3>
-              <div className="ml-auto flex items-center gap-1 p-0.5 bg-stone-100 rounded-lg">
-                <button
-                  onClick={() => { setJdInputMode('text'); setJdFetchError(null); }}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${jdInputMode === 'text' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
-                >
-                  Paste text
-                </button>
-                <button
-                  onClick={() => { setJdInputMode('url'); setJdFetchError(null); }}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${jdInputMode === 'url' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
-                >
-                  Paste URL
-                </button>
-              </div>
-            </div>
-
-            {jdInputMode === 'text' ? (
-              <textarea
-                value={jobDescription}
-                onChange={(e) => setJobDescription(e.target.value)}
-                placeholder="Paste the full JD."
-                className="w-full h-72 p-5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none resize-none"
-                style={{ fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace', fontSize: '13px', lineHeight: '1.6' }}
-              />
-            ) : (
-              <div className="p-5">
-                <p className="text-xs text-stone-500 mb-3">Paste a link to the job posting — LinkedIn, Greenhouse, Lever, company careers page, etc.</p>
-                <div className="flex gap-2">
-                  <input
-                    type="url"
-                    value={jdUrl}
-                    onChange={e => { setJdUrl(e.target.value); setJdFetchError(null); }}
-                    onKeyDown={e => e.key === 'Enter' && fetchJd()}
-                    placeholder="https://jobs.lever.co/company/role-id"
-                    className="flex-1 text-sm border border-stone-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-stone-400"
-                  />
-                  <button
-                    onClick={fetchJd}
-                    disabled={isFetchingJd || !jdUrl.trim()}
-                    className="px-4 py-2.5 bg-stone-900 text-white rounded-lg text-sm font-medium hover:bg-stone-800 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-colors whitespace-nowrap"
-                  >
-                    {isFetchingJd ? <><Loader2 className="w-4 h-4 animate-spin" />Fetching…</> : 'Fetch JD'}
-                  </button>
-                </div>
-                {jdFetchError && (
-                  <div className="mt-3 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
-                    <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-red-700">{jdFetchError}</p>
-                  </div>
-                )}
-                {jobDescription && jdInputMode === 'url' && (
-                  <div className="mt-3 flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                    <p className="text-xs text-emerald-700">JD fetched successfully — switching to text view.</p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border border-stone-200 p-5 mb-6">
-          <div className="grid md:grid-cols-2 gap-5">
-            <div>
-              <label className="block text-xs font-semibold text-stone-500 uppercase tracking-wider mb-2">PM Archetype</label>
-              <div className="flex flex-wrap gap-2">
-                {archetypes.map(a => (
-                  <button key={a} onClick={() => setArchetype(a)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${archetype === a ? 'bg-stone-900 text-stone-50' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}>
-                    {a}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-stone-500 uppercase tracking-wider mb-2">Seniority</label>
-              <div className="flex flex-wrap gap-2">
-                {seniorities.map(s => (
-                  <button key={s} onClick={() => setSeniority(s)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${seniority === s ? 'bg-stone-900 text-stone-50' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}>
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="mb-8">
-          <button
-            onClick={generateResume}
-            disabled={busy || !masterResume.trim() || !jobDescription.trim()}
-            className="w-full md:w-auto px-8 py-4 bg-stone-900 text-stone-50 rounded-xl font-medium text-sm hover:bg-stone-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-sm"
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {stage || 'Working...'}
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4" />
-                {result ? 'Regenerate from scratch' : 'Tailor & Score My Resume'}
-              </>
-            )}
-          </button>
-        </div>
-
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-            <div className="text-sm text-red-900">{error}</div>
-          </div>
-        )}
-
-        {result && (
-          <div className="space-y-6">
-            {/* ATS Score Card */}
+            {/* ── ATS Score Card ── */}
             {result.ats && (() => {
               const colors = scoreColor(result.ats.match_score);
               const circumference = 2 * Math.PI * 56;
               const offset = circumference - (result.ats.match_score / 100) * circumference;
               const delta = previousScore !== null ? result.ats.match_score - previousScore : null;
               return (
-                <div className={`${colors.bg} ${colors.border} border rounded-xl p-6`}>
+                <div className={`${colors.bg} ${colors.border} border rounded-xl p-6 mb-6`}>
                   <div className="flex items-start gap-6 flex-wrap">
                     <div className="relative flex-shrink-0">
                       <svg width="140" height="140" className="-rotate-90">
                         <circle cx="70" cy="70" r="56" stroke="currentColor" strokeWidth="10" fill="none" className="text-stone-200" />
-                        <circle cx="70" cy="70" r="56" strokeWidth="10" fill="none"
-                          className={colors.ring}
-                          strokeDasharray={circumference}
-                          strokeDashoffset={offset}
-                          strokeLinecap="round"
-                          style={{ transition: 'stroke-dashoffset 1s ease-out' }}
-                        />
+                        <circle cx="70" cy="70" r="56" strokeWidth="10" fill="none" className={colors.ring} strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" style={{ transition: 'stroke-dashoffset 1s ease-out' }} />
                       </svg>
                       <div className="absolute inset-0 flex flex-col items-center justify-center">
                         <span className={`display-font text-4xl font-semibold ${colors.text}`}>{result.ats.match_score}</span>
@@ -1859,8 +1842,7 @@ OUTPUT (return ONLY this JSON, no markdown):
                         const stdColor = s >= 60 ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : s >= 40 ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-red-50 border-red-200 text-red-800';
                         return (
                           <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium mb-3 ${stdColor}`}>
-                            <span className="font-bold text-sm">{s}</span>
-                            <span className="opacity-70">/100</span>
+                            <span className="font-bold text-sm">{s}</span><span className="opacity-70">/100</span>
                             <span className="mx-1 opacity-30">·</span>
                             <span>{result.ats.ats_standard_label}</span>
                             <span className="opacity-50 ml-1">(Standard ATS)</span>
@@ -1878,16 +1860,10 @@ OUTPUT (return ONLY this JSON, no markdown):
                       </div>
                     </div>
                   </div>
-                  {/* Reset if there's a prior state */}
                   {previousScore !== null && result !== originalResult && (
                     <div className="mt-4 pt-4 border-t border-stone-200/50">
-                      <button
-                        onClick={resetToOriginal}
-                        disabled={busy}
-                        className="text-xs text-stone-600 hover:text-stone-900 flex items-center gap-1.5 transition-colors disabled:opacity-50"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        Reset to original tailored version
+                      <button onClick={resetToOriginal} disabled={busy} className="text-xs text-stone-600 hover:text-stone-900 flex items-center gap-1.5 transition-colors disabled:opacity-50">
+                        <RotateCcw className="w-3.5 h-3.5" /> Reset to original tailored version
                       </button>
                     </div>
                   )}
@@ -1895,10 +1871,10 @@ OUTPUT (return ONLY this JSON, no markdown):
               );
             })()}
 
-            <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
+            {/* ── Analysis Tabs ── */}
+            <div className="bg-white rounded-xl border border-stone-200 overflow-hidden mb-6">
               <div className="border-b border-stone-200 flex overflow-x-auto">
                 {[
-                  { id: 'bullets', label: 'Tailored Bullets' },
                   { id: 'satisfied', label: 'What Matched', count: result.ats?.satisfied_keywords?.length },
                   { id: 'addressable', label: 'Quick Wins', count: result.ats?.missing_addressable?.length, highlight: result.ats?.missing_addressable?.length > 0 },
                   { id: 'gaps', label: 'Real Gaps', count: result.ats?.missing_real_gaps?.length },
@@ -1913,508 +1889,17 @@ OUTPUT (return ONLY this JSON, no markdown):
                 ))}
               </div>
 
-              {/* Tailored Bullets tab */}
-              {activeTab === 'bullets' && (
-                <div>
-                  {result.tailoring_notes && (
-                    <div className="px-6 py-4 bg-amber-50 border-b border-amber-100">
-                      <div className="flex items-start gap-2">
-                        <Lightbulb className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
-                        <p className="text-xs text-amber-900 leading-relaxed">{result.tailoring_notes}</p>
-                      </div>
-                    </div>
-                  )}
-                  <div className="px-6 py-3 border-b border-stone-100 flex items-center justify-between gap-2 flex-wrap">
-                    {/* Template switcher */}
-                    <div className="flex gap-0.5 p-1 bg-stone-100 rounded-lg">
-                      <button onClick={() => setSelectedTailoredTemplate('template1')}
-                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${selectedTailoredTemplate === 'template1' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>
-                        Template 1
-                      </button>
-                      <button onClick={() => setSelectedTailoredTemplate('template2')}
-                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${selectedTailoredTemplate === 'template2' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>
-                        Template 2
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => selectedTailoredTemplate === 'template1' ? exportToPDF(tailoredDisplay, personalInfo) : exportToPDFTemplate2(tailoredDisplay, personalInfo)}
-                        className="px-3 py-1.5 text-xs font-medium text-stone-700 border border-stone-200 hover:bg-stone-50 rounded-md flex items-center gap-1.5 transition-colors"
-                      >
-                        <Download className="w-3.5 h-3.5" /> Download PDF
-                      </button>
-                      <button onClick={copyAll} className="px-3 py-1.5 text-xs font-medium text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-md flex items-center gap-1.5 transition-colors">
-                        {copiedIdx === 'all' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        {copiedIdx === 'all' ? 'Copied' : 'Copy all'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Template preview */}
-                  <div style={{ fontFamily: 'Calibri, Arial, sans-serif' }}>
-
-                  {selectedTailoredTemplate === 'template1' && (
-                  <div className="px-10 py-8">
-                    {/* T1 Header */}
-                    <div className="mb-1">
-                      <div className="font-bold text-stone-900" style={{ fontSize: '1.35rem' }}>
-                        {personalInfo.name || 'YOUR NAME'}
-                      </div>
-                      {personalInfo.title && <div className="text-sm" style={{ color: '#1F4E79' }}>{personalInfo.title}</div>}
-                    </div>
-                    <div className="text-xs text-stone-500 mb-1 flex flex-wrap gap-3">
-                      {[personalInfo.email, personalInfo.phone, personalInfo.location, personalInfo.linkedin].filter(Boolean).map((c, i) => (
-                        <span key={i}>{c}</span>
-                      ))}
-                      {!personalInfo.email && !personalInfo.phone && !personalInfo.location && !personalInfo.linkedin && (
-                        <span className="text-stone-400">email · phone · location</span>
-                      )}
-                    </div>
-                    <div className="border-t-2 border-stone-900 mb-4" />
-
-                    {/* T1 Summary */}
-                    <div className="mb-4">
-                      <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Professional Summary</div>
-                      <div className="border-t mb-2" style={{ borderColor: '#1F4E79' }} />
-                      {editingKey === 't-summary' ? (
-                        <textarea
-                          autoFocus
-                          defaultValue={tailoredDisplay.summary}
-                          onBlur={e => { const v = e.target.value.trim(); if (v) setResult(prev => ({ ...prev, summary: v })); setEditingKey(null); }}
-                          onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
-                          rows={4}
-                          className="w-full text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none leading-relaxed text-stone-700"
-                        />
-                      ) : (
-                        <div className="flex items-start gap-1.5">
-                          <p
-                            className="flex-1 text-xs text-stone-700 leading-relaxed cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
-                            onClick={() => setEditingKey('t-summary')}
-                            title="Click to edit"
-                          >{tailoredDisplay.summary || <span className="text-stone-400 italic">No summary</span>}</p>
-                          <button onClick={() => setEditingKey('t-summary')} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit">
-                            <Pencil className="w-2.5 h-2.5" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* T1 Experience */}
-                    <div className="mb-4">
-                      <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Work Experience</div>
-                      <div className="border-t mb-3" style={{ borderColor: '#1F4E79' }} />
-                      {tailoredDisplay.master_experiences.map((exp, expIdx) => (
-                        <div key={expIdx} className="mb-4">
-                          <div className="flex items-baseline justify-between">
-                            <div className="text-sm font-bold text-stone-900">{exp.role} | {exp.company}</div>
-                            <div className="text-xs text-stone-500 ml-2 whitespace-nowrap">{exp.dates}</div>
-                          </div>
-                          <ul className="mt-1.5 space-y-1">
-                            {exp.bullets.map((b, bIdx) => {
-                              const key = `t-${expIdx}-${bIdx}`;
-                              const isEditing = editingKey === key;
-                              const isRefineOpen = refineKey === key;
-                              return (
-                                <li key={bIdx}>
-                                  <div className="flex items-start gap-2 text-sm text-stone-800 leading-relaxed">
-                                    <span className="text-stone-400 flex-shrink-0 mt-0.5">•</span>
-                                    {isEditing ? (
-                                      <textarea
-                                        autoFocus
-                                        value={editingText}
-                                        onChange={e => setEditingText(e.target.value)}
-                                        onBlur={() => {
-                                          if (editingText.trim()) updateTailoredBullet(expIdx, bIdx, editingText.trim());
-                                          setEditingKey(null);
-                                        }}
-                                        onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
-                                        rows={2}
-                                        className="flex-1 text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
-                                      />
-                                    ) : (
-                                      <span
-                                        className="flex-1 cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
-                                        onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
-                                        title="Click to edit"
-                                      >{b}</span>
-                                    )}
-                                    {!isEditing && (
-                                      <div className="flex items-center gap-1 flex-shrink-0">
-                                        <button
-                                          onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
-                                          className="p-1 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors"
-                                          title="Edit manually"
-                                        >
-                                          <Pencil className="w-3 h-3" />
-                                        </button>
-                                        <button
-                                          onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }}
-                                          className={`p-1 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`}
-                                          title="Refine with AI"
-                                        >
-                                          <Sparkles className="w-3 h-3" />
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-                                  {isRefineOpen && (
-                                    <div className="mt-2 ml-5 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-                                      <p className="text-xs text-amber-700 font-medium mb-2">What should change about this bullet?</p>
-                                      <div className="flex gap-2 items-center">
-                                        <input
-                                          autoFocus
-                                          type="text"
-                                          value={refinePrompt}
-                                          onChange={e => setRefinePrompt(e.target.value)}
-                                          onKeyDown={e => {
-                                            if (e.key === 'Enter') refineTailoredBullet(expIdx, bIdx, b);
-                                            if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); }
-                                          }}
-                                          placeholder="e.g. emphasize leadership, add more scope, make it punchier…"
-                                          className="flex-1 text-sm border border-amber-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
-                                        />
-                                        <button
-                                          onClick={() => refineTailoredBullet(expIdx, bIdx, b)}
-                                          disabled={isRefining || !refinePrompt.trim()}
-                                          className="px-3 py-2 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 transition-colors whitespace-nowrap"
-                                        >
-                                          {isRefining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                                          Rewrite
-                                        </button>
-                                        <button
-                                          onClick={() => { setRefineKey(null); setRefinePrompt(''); }}
-                                          className="p-2 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors"
-                                        >
-                                          <X className="w-3.5 h-3.5" />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  )}
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* T1 Education */}
-                    {tailoredDisplay.education?.length > 0 && (
-                      <div className="mb-4">
-                        <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Education</div>
-                        <div className="border-t mb-3" style={{ borderColor: '#1F4E79' }} />
-                        {tailoredDisplay.education.map((edu, i) => (
-                          <div key={i} className="mb-2">
-                            <div className="flex items-baseline justify-between">
-                              <div className="text-sm font-bold text-stone-900">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</div>
-                              <div className="text-xs text-stone-500">{edu.dates}</div>
-                            </div>
-                            <div className="text-xs" style={{ color: '#1F4E79' }}>{edu.institution}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* T1 Skills */}
-                    <div>
-                      <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: '#1F4E79' }}>Skills</div>
-                      <div className="border-t mb-2" style={{ borderColor: '#1F4E79' }} />
-                      <div className="flex flex-wrap gap-1 items-center">
-                        {(tailoredDisplay.skills ?? []).map((skill, i) => (
-                          <span key={i} className="inline-flex items-center gap-0.5 text-xs text-stone-700 group mr-1.5">
-                            {skill}
-                            <button onClick={() => setResult(prev => ({ ...prev, skills: prev.skills.filter((_, si) => si !== i) }))}
-                              className="text-stone-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
-                              <X className="w-2 h-2" />
-                            </button>
-                          </span>
-                        ))}
-                        <input
-                          value={tailoredNewSkill}
-                          onChange={e => setTailoredNewSkill(e.target.value)}
-                          onKeyDown={e => {
-                            if ((e.key === 'Enter' || e.key === ',') && tailoredNewSkill.trim()) {
-                              e.preventDefault();
-                              setResult(prev => ({ ...prev, skills: [...(prev.skills ?? []), tailoredNewSkill.trim()] }));
-                              setTailoredNewSkill('');
-                            }
-                            if (e.key === 'Escape') setTailoredNewSkill('');
-                          }}
-                          placeholder="+ Add skill"
-                          className="text-xs border border-dashed border-stone-300 rounded px-1.5 py-0.5 focus:outline-none focus:border-stone-500 w-20 text-stone-500 placeholder-stone-300"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                  )}{/* end tailored t1 */}
-
-                  {selectedTailoredTemplate === 'template2' && (
-                  <div className="px-8 py-7">
-                    {/* T2 Header */}
-                    <div className="mb-4">
-                      <div className="font-black text-stone-900 uppercase tracking-tight" style={{ fontSize: '1.9rem', lineHeight: 1.1 }}>
-                        {personalInfo.name || 'YOUR NAME'}
-                      </div>
-                      <div className="text-sm font-semibold mt-1 mb-2" style={{ color: '#1F4E79' }}>
-                        {personalInfo.title || 'Your Professional Title'}
-                      </div>
-                      <div className="flex flex-wrap gap-4 text-xs text-stone-600">
-                        {personalInfo.phone ? <span>{personalInfo.phone}</span> : null}
-                        {personalInfo.email ? <span>{personalInfo.email}</span> : null}
-                        {personalInfo.linkedin ? <span>{personalInfo.linkedin}</span> : null}
-                        {personalInfo.location ? <span>{personalInfo.location}</span> : null}
-                        {!personalInfo.phone && !personalInfo.email && !personalInfo.linkedin && !personalInfo.location && (
-                          <span className="text-stone-400">000-000-0000 · you@email.com · LinkedIn · City, State</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="border-b border-stone-300 mb-4" />
-
-                    {/* T2 Two-column body */}
-                    <div className="flex gap-7">
-                      {/* LEFT: Experience */}
-                      <div style={{ flex: '0 0 54%' }}>
-                        <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Experience</div>
-                        <div className="border-t mb-3 border-stone-800" />
-                        {tailoredDisplay.master_experiences.map((exp, expIdx) => (
-                          <div key={expIdx} className="mb-4">
-                            <div className="text-sm font-bold text-stone-900">{exp.role}</div>
-                            <div className="text-xs font-semibold" style={{ color: '#1F4E79' }}>{exp.company}</div>
-                            <div className="text-xs text-stone-500 mb-1.5">{exp.dates}</div>
-                            <ul className="space-y-1">
-                              {exp.bullets.map((b, bIdx) => {
-                                const key = `t-${expIdx}-${bIdx}`;
-                                const isEditing = editingKey === key;
-                                const isRefineOpen = refineKey === key;
-                                return (
-                                  <li key={bIdx}>
-                                    <div className="flex items-start gap-1.5 text-xs text-stone-800 leading-relaxed">
-                                      <span className="text-stone-400 flex-shrink-0 mt-0.5">•</span>
-                                      {isEditing ? (
-                                        <textarea
-                                          autoFocus
-                                          value={editingText}
-                                          onChange={e => setEditingText(e.target.value)}
-                                          onBlur={() => {
-                                            if (editingText.trim()) updateTailoredBullet(expIdx, bIdx, editingText.trim());
-                                            setEditingKey(null);
-                                          }}
-                                          onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
-                                          rows={2}
-                                          className="flex-1 text-xs border border-stone-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
-                                        />
-                                      ) : (
-                                        <span
-                                          className="flex-1 cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
-                                          onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
-                                          title="Click to edit"
-                                        >{b}</span>
-                                      )}
-                                      {!isEditing && (
-                                        <div className="flex items-center gap-0.5 flex-shrink-0">
-                                          <button
-                                            onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
-                                            className="p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors"
-                                            title="Edit manually"
-                                          >
-                                            <Pencil className="w-2.5 h-2.5" />
-                                          </button>
-                                          <button
-                                            onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }}
-                                            className={`p-0.5 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`}
-                                            title="Refine with AI"
-                                          >
-                                            <Sparkles className="w-2.5 h-2.5" />
-                                          </button>
-                                        </div>
-                                      )}
-                                    </div>
-                                    {isRefineOpen && (
-                                      <div className="mt-1.5 ml-4 p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
-                                        <p className="text-xs text-amber-700 font-medium mb-1.5">What should change?</p>
-                                        <div className="flex gap-1.5 items-center">
-                                          <input
-                                            autoFocus
-                                            type="text"
-                                            value={refinePrompt}
-                                            onChange={e => setRefinePrompt(e.target.value)}
-                                            onKeyDown={e => {
-                                              if (e.key === 'Enter') refineTailoredBullet(expIdx, bIdx, b);
-                                              if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); }
-                                            }}
-                                            placeholder="e.g. more impact, stronger verb…"
-                                            className="flex-1 text-xs border border-amber-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
-                                          />
-                                          <button
-                                            onClick={() => refineTailoredBullet(expIdx, bIdx, b)}
-                                            disabled={isRefining || !refinePrompt.trim()}
-                                            className="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors whitespace-nowrap"
-                                          >
-                                            {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                                            Rewrite
-                                          </button>
-                                          <button
-                                            onClick={() => { setRefineKey(null); setRefinePrompt(''); }}
-                                            className="p-1.5 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors"
-                                          >
-                                            <X className="w-3 h-3" />
-                                          </button>
-                                        </div>
-                                      </div>
-                                    )}
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* RIGHT: Summary, Education, Key Achievements, Skills */}
-                      <div style={{ flex: 1 }}>
-                        <div className="mb-4">
-                          <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Summary</div>
-                          <div className="border-t mb-2 border-stone-800" />
-                          {editingKey === 't-summary' ? (
-                            <textarea
-                              autoFocus
-                              defaultValue={tailoredDisplay.summary}
-                              onBlur={e => { const v = e.target.value.trim(); if (v) setResult(prev => ({ ...prev, summary: v })); setEditingKey(null); }}
-                              onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
-                              rows={4}
-                              className="w-full text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none leading-relaxed text-stone-700"
-                            />
-                          ) : (
-                            <div className="flex items-start gap-1.5">
-                              <p
-                                className="flex-1 text-xs text-stone-700 leading-relaxed cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
-                                onClick={() => setEditingKey('t-summary')}
-                                title="Click to edit"
-                              >{tailoredDisplay.summary || <span className="text-stone-400 italic">No summary</span>}</p>
-                              <button onClick={() => setEditingKey('t-summary')} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit">
-                                <Pencil className="w-2.5 h-2.5" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                        {tailoredDisplay.education?.length > 0 && (
-                          <div className="mb-4">
-                            <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Education</div>
-                            <div className="border-t mb-2 border-stone-800" />
-                            {tailoredDisplay.education.map((edu, i) => (
-                              <div key={i} className="mb-2">
-                                <div className="text-xs font-bold text-stone-900">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</div>
-                                <div className="text-xs font-semibold" style={{ color: '#1F4E79' }}>{edu.institution}</div>
-                                <div className="text-xs text-stone-500 mt-0.5">{edu.dates}</div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {tailoredDisplay.master_experiences?.length > 0 && tailoredDisplay.master_experiences[0]?.bullets?.length > 0 && (
-                          <div className="mb-4">
-                            <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Key Achievements</div>
-                            <div className="border-t mb-2 border-stone-800" />
-                            {tailoredDisplay.master_experiences.slice(0, 2).map((exp, i) => {
-                              if (!exp.bullets[0]) return null;
-                              const key = `t-${i}-0`;
-                              const isEditing = editingKey === key;
-                              const isRefineOpen = refineKey === key;
-                              return (
-                                <div key={i} className="mb-2">
-                                  <div className="text-xs font-bold text-stone-900">{exp.company}</div>
-                                  <div className="flex items-start gap-1.5 mt-0.5">
-                                    {isEditing ? (
-                                      <textarea
-                                        autoFocus
-                                        value={editingText}
-                                        onChange={e => setEditingText(e.target.value)}
-                                        onBlur={() => { if (editingText.trim()) updateTailoredBullet(i, 0, editingText.trim()); setEditingKey(null); }}
-                                        onKeyDown={e => { if (e.key === 'Escape') setEditingKey(null); }}
-                                        rows={2}
-                                        className="flex-1 text-xs border border-stone-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
-                                      />
-                                    ) : (
-                                      <span className="flex-1 text-xs text-stone-600 leading-relaxed">{exp.bullets[0]}</span>
-                                    )}
-                                    {!isEditing && (
-                                      <div className="flex items-center gap-0.5 flex-shrink-0">
-                                        <button onClick={() => { setEditingKey(key); setEditingText(exp.bullets[0]); setRefineKey(null); }} className="p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-700 transition-colors" title="Edit manually">
-                                          <Pencil className="w-2.5 h-2.5" />
-                                        </button>
-                                        <button onClick={() => { setRefineKey(isRefineOpen ? null : key); setRefinePrompt(''); setEditingKey(null); }} className={`p-0.5 rounded transition-colors ${isRefineOpen ? 'bg-amber-100 text-amber-600' : 'text-stone-300 hover:bg-stone-100 hover:text-stone-600'}`} title="Refine with AI">
-                                          <Sparkles className="w-2.5 h-2.5" />
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-                                  {isRefineOpen && (
-                                    <div className="mt-1.5 p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
-                                      <p className="text-xs text-amber-700 font-medium mb-1.5">What should change?</p>
-                                      <div className="flex gap-1.5 items-center">
-                                        <input autoFocus type="text" value={refinePrompt} onChange={e => setRefinePrompt(e.target.value)}
-                                          onKeyDown={e => { if (e.key === 'Enter') refineTailoredBullet(i, 0, exp.bullets[0]); if (e.key === 'Escape') { setRefineKey(null); setRefinePrompt(''); } }}
-                                          placeholder="e.g. more impact, stronger verb…"
-                                          className="flex-1 text-xs border border-amber-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white placeholder-amber-300"
-                                        />
-                                        <button onClick={() => refineTailoredBullet(i, 0, exp.bullets[0])} disabled={isRefining || !refinePrompt.trim()} className="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors whitespace-nowrap">
-                                          {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Rewrite
-                                        </button>
-                                        <button onClick={() => { setRefineKey(null); setRefinePrompt(''); }} className="p-1.5 rounded-lg hover:bg-amber-100 text-amber-400 hover:text-amber-700 transition-colors">
-                                          <X className="w-3 h-3" />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                        <div className="mb-2">
-                          <div className="text-xs font-bold uppercase tracking-widest mb-1 text-stone-900">Skills</div>
-                          <div className="border-t mb-2 border-stone-800" />
-                          <div className="flex flex-wrap gap-1 items-center">
-                            {(tailoredDisplay.skills ?? []).map((skill, i) => (
-                              <span key={i} className="inline-flex items-center gap-0.5 text-xs text-stone-700 group mr-1.5">
-                                {skill}
-                                <button onClick={() => setResult(prev => ({ ...prev, skills: prev.skills.filter((_, si) => si !== i) }))}
-                                  className="text-stone-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
-                                  <X className="w-2 h-2" />
-                                </button>
-                              </span>
-                            ))}
-                            <input
-                              value={tailoredNewSkill}
-                              onChange={e => setTailoredNewSkill(e.target.value)}
-                              onKeyDown={e => {
-                                if ((e.key === 'Enter' || e.key === ',') && tailoredNewSkill.trim()) {
-                                  e.preventDefault();
-                                  setResult(prev => ({ ...prev, skills: [...(prev.skills ?? []), tailoredNewSkill.trim()] }));
-                                  setTailoredNewSkill('');
-                                }
-                                if (e.key === 'Escape') setTailoredNewSkill('');
-                              }}
-                              placeholder="+ Add skill"
-                              className="text-xs border border-dashed border-stone-300 rounded px-1.5 py-0.5 focus:outline-none focus:border-stone-500 w-20 text-stone-500 placeholder-stone-300"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  )}{/* end tailored t2 */}
-
-                  </div>{/* end template preview */}
-                </div>
-              )}
-
-              {/* What Matched tab */}
+              {/* What Matched */}
               {activeTab === 'satisfied' && (
                 <div className="p-6">
-                  <p className="text-xs text-stone-500 mb-4">JD requirements your tailored resume already covers, with evidence.</p>
+                  <p className="text-xs text-stone-500 mb-4">JD requirements your resume already covers, with evidence.</p>
                   <div className="space-y-2">
                     {result.ats?.satisfied_keywords?.map((k, i) => (
-                      <div key={i} className="flex items-start gap-3 p-3 bg-emerald-50 rounded-lg">
+                      <div key={i}
+                        className={`flex items-start gap-3 p-3 rounded-lg cursor-default transition-all duration-150 ${hoveredKeyword === k.keyword ? 'bg-yellow-100 ring-1 ring-yellow-300' : 'bg-emerald-50'}`}
+                        onMouseEnter={() => { setHoveredKeyword(k.keyword); setHoveredType('match'); }}
+                        onMouseLeave={() => { setHoveredKeyword(null); setHoveredType(null); }}
+                      >
                         <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-0.5">
@@ -2430,134 +1915,259 @@ OUTPUT (return ONLY this JSON, no markdown):
                 </div>
               )}
 
-              {/* Quick Wins tab - the new interactive one */}
+              {/* Quick Wins */}
               {activeTab === 'addressable' && (
                 <div>
-                  {/* Sticky action bar */}
                   {result.ats?.missing_addressable?.length > 0 && (
                     <div className="sticky top-0 bg-white border-b border-stone-200 px-6 py-4 z-10">
                       <div className="flex items-center justify-between gap-4 flex-wrap">
                         <div className="flex items-center gap-4 flex-wrap">
                           <div className="flex items-center gap-2">
                             <Zap className="w-4 h-4 text-amber-600" />
-                            <span className="text-sm font-medium text-stone-900">
-                              {selectedWins.size} of {result.ats.missing_addressable.length} selected
-                            </span>
+                            <span className="text-sm font-medium text-stone-900">{selectedWins.size} of {result.ats.missing_addressable.length} selected</span>
                           </div>
                           <div className="flex items-center gap-2 text-xs">
-                            <button onClick={selectAllWins} className="text-stone-600 hover:text-stone-900 underline underline-offset-2">
-                              Select all
-                            </button>
+                            <button onClick={selectAllWins} className="text-stone-600 hover:text-stone-900 underline underline-offset-2">Select all</button>
                             <span className="text-stone-300">·</span>
-                            <button onClick={clearAllWins} className="text-stone-600 hover:text-stone-900 underline underline-offset-2">
-                              Clear
-                            </button>
+                            <button onClick={clearAllWins} className="text-stone-600 hover:text-stone-900 underline underline-offset-2">Clear</button>
                           </div>
                         </div>
                         <button
                           onClick={applyQuickWins}
-                          disabled={selectedWins.size === 0 || busy}
-                          className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm"
+                          disabled={busy || selectedWins.size === 0}
+                          className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
                         >
-                          {isApplying ? (
-                            <>
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                              {stage || 'Applying...'}
-                            </>
-                          ) : (
-                            <>
-                              <Zap className="w-4 h-4" />
-                              Apply {selectedWins.size > 0 ? `${selectedWins.size} ` : ''}Quick Win{selectedWins.size !== 1 ? 's' : ''}
-                              <ArrowRight className="w-4 h-4" />
-                            </>
-                          )}
+                          {isApplying ? <><Loader2 className="w-4 h-4 animate-spin" />{stage || 'Applying…'}</> : <><Zap className="w-4 h-4" />Apply {selectedWins.size > 0 ? selectedWins.size : ''} Win{selectedWins.size !== 1 ? 's' : ''}</>}
                         </button>
                       </div>
                     </div>
                   )}
-
-                  <div className="p-6">
-                    <p className="text-xs text-stone-500 mb-4">
-                      Missing keywords that you CAN add truthfully by rephrasing existing content. <strong className="text-stone-700">Select the ones you want to incorporate</strong> — Claude will regenerate the bullets and recompute the score.
-                    </p>
-                    {result.ats?.missing_addressable?.length === 0 ? (
-                      <div className="text-center py-12">
-                        <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-3" />
-                        <p className="text-sm font-medium text-stone-900 mb-1">All addressable keywords covered</p>
-                        <p className="text-xs text-stone-500">No quick wins left to apply.</p>
+                  <div className="p-6 space-y-3">
+                    <p className="text-xs text-stone-500 mb-2">These JD signals are reachable — your experience covers them but the language doesn't surface it yet. Select the ones you want and click Apply.</p>
+                    {result.ats?.missing_addressable?.map((k, i) => (
+                      <div key={i} onClick={() => toggleWin(i)}
+                        className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${selectedWins.has(i) ? 'border-amber-400 bg-amber-50' : 'border-stone-200 bg-white hover:border-stone-300'}`}>
+                        <div className="flex items-start gap-3">
+                          <div className={`w-5 h-5 rounded border-2 flex-shrink-0 mt-0.5 flex items-center justify-center transition-all ${selectedWins.has(i) ? 'bg-amber-500 border-amber-500' : 'border-stone-300'}`}>
+                            {selectedWins.has(i) && <Check className="w-3 h-3 text-white" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <span className="font-semibold text-sm text-stone-900">{k.keyword}</span>
+                              <span className="text-xs px-1.5 py-0.5 bg-stone-100 text-stone-600 rounded">{categoryLabels[k.category] || k.category}</span>
+                              {k.weight === 'must_have' && <span className="text-xs px-1.5 py-0.5 bg-stone-900 text-white rounded">must-have</span>}
+                            </div>
+                            <p className="text-xs text-stone-600 leading-relaxed">{k.fix_suggestion}</p>
+                          </div>
+                        </div>
                       </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {result.ats?.missing_addressable?.map((k, i) => {
-                          const isSelected = selectedWins.has(i);
-                          return (
-                            <label
-                              key={i}
-                              className={`block p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                                isSelected ? 'bg-amber-50 border-amber-400' : 'bg-white border-stone-200 hover:border-stone-300'
-                              }`}
-                            >
-                              <div className="flex items-start gap-3">
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => toggleWin(i)}
-                                  className="mt-1 w-4 h-4 rounded border-stone-300 text-amber-600 focus:ring-amber-500 focus:ring-offset-0 cursor-pointer"
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap mb-2">
-                                    <span className="font-medium text-sm text-stone-900">{k.keyword}</span>
-                                    <span className="text-xs px-1.5 py-0.5 bg-stone-100 text-stone-600 rounded">{categoryLabels[k.category] || k.category}</span>
-                                    {k.weight === 'must_have' && <span className="text-xs px-1.5 py-0.5 bg-stone-900 text-white rounded">must-have</span>}
-                                  </div>
-                                  <div className="text-sm text-stone-700 leading-relaxed">
-                                    <span className="font-medium text-stone-900">Suggested fix: </span>{k.fix_suggestion}
-                                  </div>
-                                </div>
-                              </div>
-                            </label>
-                          );
-                        })}
+                    ))}
+                    {(!result.ats?.missing_addressable || result.ats.missing_addressable.length === 0) && (
+                      <div className="text-center py-8 text-stone-400">
+                        <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-400" />
+                        <p className="text-sm">No addressable gaps — you're well covered!</p>
                       </div>
                     )}
                   </div>
                 </div>
               )}
 
-              {/* Real Gaps tab */}
+              {/* Real Gaps */}
               {activeTab === 'gaps' && (
                 <div className="p-6">
-                  <p className="text-xs text-stone-500 mb-4">Things the JD asks for that you genuinely don't have. Address in cover letter or interview — don't fake it on the resume.</p>
-                  {result.ats?.missing_real_gaps?.length === 0 ? (
-                    <div className="text-center py-8 text-sm text-stone-500">No real gaps — strong match across the board.</div>
-                  ) : (
+                  <p className="text-xs text-stone-500 mb-4">These are genuine gaps — no amount of rewording covers them. Be aware of these before applying.</p>
+                  {result.ats?.missing_real_gaps?.length > 0 ? (
                     <div className="space-y-3">
-                      {result.ats?.missing_real_gaps?.map((k, i) => (
-                        <div key={i} className="p-4 bg-red-50 border border-red-100 rounded-lg">
-                          <div className="flex items-center gap-2 flex-wrap mb-2">
-                            <XCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
-                            <span className="font-medium text-sm text-stone-900">{k.keyword}</span>
-                            <span className="text-xs px-1.5 py-0.5 bg-white text-stone-600 rounded">{categoryLabels[k.category] || k.category}</span>
-                            {k.weight === 'must_have' && <span className="text-xs px-1.5 py-0.5 bg-stone-900 text-white rounded">must-have</span>}
+                      {result.ats.missing_real_gaps.map((k, i) => (
+                        <div key={i}
+                          className={`flex items-start gap-3 p-4 rounded-xl border cursor-default transition-all duration-150 ${hoveredKeyword === k.keyword ? 'bg-red-100 border-red-400 shadow-sm' : 'bg-red-50 border-red-200'}`}
+                          onMouseEnter={() => { setHoveredKeyword(k.keyword); setHoveredType('gap'); }}
+                          onMouseLeave={() => { setHoveredKeyword(null); setHoveredType(null); }}
+                        >
+                          <XCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <span className="font-semibold text-sm text-stone-900">{k.keyword}</span>
+                              <span className="text-xs px-1.5 py-0.5 bg-white text-stone-600 rounded">{categoryLabels[k.category] || k.category}</span>
+                              {k.weight === 'must_have' && <span className="text-xs px-1.5 py-0.5 bg-red-700 text-white rounded">must-have</span>}
+                            </div>
+                            <p className="text-xs text-stone-600 leading-relaxed">{k.why_it_matters}</p>
+                            {hoveredKeyword === k.keyword && (
+                              <p className="text-xs text-red-500 font-medium mt-1.5 flex items-center gap-1">
+                                <XCircle className="w-3 h-3" /> Not found in your resume — consider adding this skill or experience
+                              </p>
+                            )}
                           </div>
-                          <div className="ml-6 text-sm text-stone-700 leading-relaxed">{k.why_it_matters}</div>
                         </div>
                       ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-stone-400">
+                      <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-400" />
+                      <p className="text-sm">No real gaps detected — strong fit!</p>
                     </div>
                   )}
                 </div>
               )}
             </div>
+            </div>{/* end right col */}
+            </div>{/* end two-column */}
+
+            {/* Regenerate from scratch */}
+            <div className="flex items-center justify-between pt-2">
+              <button
+                onClick={generateAll}
+                disabled={busy || isGeneratingAll}
+                className="text-sm text-stone-500 hover:text-stone-900 flex items-center gap-1.5 transition-colors disabled:opacity-40"
+              >
+                <RotateCcw className="w-4 h-4" /> Regenerate from scratch
+              </button>
+            </div>
+
           </div>
         )}
 
-        <div className="mt-12 pt-6 border-t border-stone-200 text-xs text-stone-500 leading-relaxed">
-          <strong className="text-stone-700">POC v3 — what's new:</strong> Quick Wins are now actionable. Select the ones you want, click "Apply", and Claude regenerates the bullets with those keywords incorporated (truthfully — no inventing). The score recomputes and shows the delta. Reset anytime to return to the original tailored version.
-        </div>
-        </div>
-        )}
-
       </main>
+
+      {/* ── Add Section Modal ── */}
+      {showAddSection && (() => {
+        const isT1 = selectedTailoredTemplate === 'template1';
+        const T1_DEFAULT = ['summary', 'experience', 'education', 'skills'];
+        const T2_DEFAULT = ['experience', 'summary', 'education', 'achievements', 'skills'];
+        const T1_LABELS = { summary: 'Professional Summary', experience: 'Work Experience', education: 'Education', skills: 'Skills' };
+        const T2_LABELS = { experience: 'Experience', summary: 'Summary', education: 'Education', achievements: 'Key Achievements', skills: 'Skills' };
+        const currentOrder = isT1
+          ? (t1SectionOrder || [...T1_DEFAULT, ...extraSections.map(s => s.id)])
+          : (t2SectionOrder || [...T2_DEFAULT, ...extraSections.map(s => s.id)]);
+        const labelMap = isT1 ? T1_LABELS : T2_LABELS;
+        const sectionLabels = currentOrder.map(id => labelMap[id] || (extraSections.find(s => s.id === id)?.name ?? null)).filter(Boolean);
+
+        const handleSubmit = () => {
+          if (!addSectionForm.name.trim() || !addSectionForm.details.trim()) return;
+          const bullets = addSectionForm.details.split('\n').map(l => l.replace(/^[\s•\-*]+/, '').trim()).filter(Boolean);
+          const id = `custom-${customIdCounter}`;
+          const newSec = { id, name: addSectionForm.name.trim(), from: addSectionForm.from.trim(), to: addSectionForm.to.trim(), bullets };
+          setExtraSections(prev => [...prev, newSec]);
+          setCustomIdCounter(prev => prev + 1);
+          const parsedPos = parseInt(addSectionForm.position, 10);
+          const curT1 = t1SectionOrder || [...T1_DEFAULT, ...extraSections.map(s => s.id)];
+          const curT2 = t2SectionOrder || [...T2_DEFAULT, ...extraSections.map(s => s.id)];
+          if (isT1) {
+            const idx = !isNaN(parsedPos) && parsedPos >= 1 ? Math.min(parsedPos - 1, curT1.length) : curT1.length;
+            setT1SectionOrder([...curT1.slice(0, idx), id, ...curT1.slice(idx)]);
+            setT2SectionOrder([...curT2, id]);
+          } else {
+            const idx = !isNaN(parsedPos) && parsedPos >= 1 ? Math.min(parsedPos - 1, curT2.length) : curT2.length;
+            setT2SectionOrder([...curT2.slice(0, idx), id, ...curT2.slice(idx)]);
+            setT1SectionOrder([...curT1, id]);
+          }
+          setAddSectionForm({ name: '', from: '', to: '', details: '', position: '' });
+          setShowAddSection(false);
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-stone-900/50 backdrop-blur-sm" onClick={() => setShowAddSection(false)} />
+            <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6 max-h-[90vh] overflow-y-auto" style={{ fontFamily: '"Inter", system-ui, sans-serif' }}>
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-base font-semibold text-stone-900">Add Section</h2>
+                <button onClick={() => setShowAddSection(false)} className="p-1.5 rounded-lg hover:bg-stone-100 text-stone-400 hover:text-stone-700 transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {/* Section name */}
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-1.5">Section Name</label>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={addSectionForm.name}
+                    onChange={e => setAddSectionForm(p => ({ ...p, name: e.target.value }))}
+                    placeholder="e.g. Certifications, Publications, Volunteering…"
+                    className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-stone-400 text-stone-800 placeholder-stone-300"
+                  />
+                </div>
+
+                {/* Date range */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-stone-500 mb-1.5">From</label>
+                    <input type="text" value={addSectionForm.from} onChange={e => setAddSectionForm(p => ({ ...p, from: e.target.value }))}
+                      placeholder="e.g. Jan 2023"
+                      className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-stone-400 text-stone-800 placeholder-stone-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-stone-500 mb-1.5">To</label>
+                    <input type="text" value={addSectionForm.to} onChange={e => setAddSectionForm(p => ({ ...p, to: e.target.value }))}
+                      placeholder="e.g. Present"
+                      className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-stone-400 text-stone-800 placeholder-stone-300"
+                    />
+                  </div>
+                </div>
+
+                {/* Details → bullets */}
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-1.5">Details <span className="font-normal text-stone-400">— each line becomes a bullet point</span></label>
+                  <textarea
+                    value={addSectionForm.details}
+                    onChange={e => setAddSectionForm(p => ({ ...p, details: e.target.value }))}
+                    onKeyDown={e => { if (e.key === 'Escape') setShowAddSection(false); }}
+                    placeholder={"AWS Certified Solutions Architect (2024)\nGoogle Analytics Certified\nCertified Scrum Master"}
+                    rows={4}
+                    className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-stone-400 text-stone-800 placeholder-stone-300 resize-none"
+                  />
+                </div>
+
+                {/* Existing sections reference + position */}
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-2">Current section order</label>
+                  <div className="bg-stone-50 rounded-lg px-3 py-2.5 space-y-1.5 mb-3">
+                    {sectionLabels.map((label, idx) => (
+                      <div key={idx} className="flex items-center gap-2 text-xs text-stone-600">
+                        <span className="w-5 h-5 rounded-full bg-stone-200 flex items-center justify-center text-xs font-semibold flex-shrink-0">{idx + 1}</span>
+                        <span>{label}</span>
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-2 text-xs text-stone-400 pt-0.5 border-t border-stone-200 mt-1">
+                      <span className="w-5 h-5 rounded-full border border-dashed border-stone-300 flex items-center justify-center text-xs font-semibold flex-shrink-0">{sectionLabels.length + 1}</span>
+                      <span className="italic">New section (default position)</span>
+                    </div>
+                  </div>
+                  <label className="block text-xs font-medium text-stone-500 mb-1.5">
+                    Position <span className="font-normal text-stone-400">— enter a number from the list above (leave blank to add at end)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={sectionLabels.length + 1}
+                    value={addSectionForm.position}
+                    onChange={e => setAddSectionForm(p => ({ ...p, position: e.target.value }))}
+                    placeholder={`${sectionLabels.length + 1} (end)`}
+                    className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-stone-400 text-stone-800 placeholder-stone-300"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button onClick={() => setShowAddSection(false)}
+                  className="flex-1 px-4 py-2.5 border border-stone-200 rounded-lg text-sm font-medium text-stone-700 hover:bg-stone-50 transition-colors">
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmit}
+                  disabled={!addSectionForm.name.trim() || !addSectionForm.details.trim()}
+                  className="flex-1 px-4 py-2.5 bg-stone-900 text-stone-50 rounded-lg text-sm font-medium hover:bg-stone-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Add to Resume
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
