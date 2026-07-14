@@ -39,11 +39,8 @@ export async function POST(request) {
 
     const pageText = stripHtml(html).slice(0, 15000); // cap to avoid token overload
 
-    // Ask Gemini to validate and extract
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const result = await model.generateContent({
-      contents: [{
-        role: 'user', parts: [{ text: `You are given the text content of a webpage. Determine if it contains a job description.
+    // Ask Gemini to validate and extract, with quota fallback
+    const prompt = `You are given the text content of a webpage. Determine if it contains a job description.
 
 If it IS a job description: extract the clean, complete JD text — include role title, company, responsibilities, requirements, and any other relevant details. Remove navigation, ads, and unrelated page content.
 
@@ -57,10 +54,24 @@ Respond in this JSON format only:
 }
 
 PAGE CONTENT:
-${pageText}` }]
-      }],
-      generationConfig: { maxOutputTokens: 2000, thinkingConfig: { thinkingBudget: 0 } },
-    });
+${pageText}`;
+
+    const payload = {
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: 2000 },
+    };
+
+    let result;
+    for (const modelName of ['gemini-2.5-flash', 'gemini-2.5-flash-lite']) {
+      try {
+        result = await genAI.getGenerativeModel({ model: modelName }).generateContent(payload);
+        break;
+      } catch (err) {
+        const is429 = err.message?.includes('429') || err.message?.includes('quota');
+        if (is429 && modelName !== 'gemini-1.5-flash') continue;
+        throw err;
+      }
+    }
 
     const raw = result.response.text().trim();
     const start = raw.indexOf('{');

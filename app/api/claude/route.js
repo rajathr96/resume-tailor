@@ -4,36 +4,37 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function generateWithRetry(model, payload, maxRetries = 3) {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await model.generateContent(payload);
-    } catch (err) {
-      const is503 = err.message?.includes('503') || err.message?.includes('high demand');
-      if (is503 && attempt < maxRetries) {
-        await sleep(1500 * 2 ** attempt); // 1.5s, 3s, 6s
-        continue;
+const MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+
+async function generateWithFallback(genAI, systemPrompt, payload) {
+  let lastErr;
+  for (const modelName of MODELS) {
+    const model = genAI.getGenerativeModel({ model: modelName, systemInstruction: systemPrompt });
+    for (let attempt = 0; attempt <= 3; attempt++) {
+      try {
+        return await model.generateContent(payload);
+      } catch (err) {
+        const is503 = err.message?.includes('503') || err.message?.includes('high demand');
+        const is429 = err.message?.includes('429') || err.message?.includes('quota');
+        if (is503 && attempt < 3) {
+          await sleep(1500 * 2 ** attempt);
+          continue;
+        }
+        if (is429) { lastErr = err; break; } // try next model
+        throw err;
       }
-      throw err;
     }
   }
+  throw lastErr;
 }
 
 export async function POST(request) {
   try {
     const { systemPrompt, userPrompt, maxTokens = 4000 } = await request.json();
 
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      systemInstruction: systemPrompt,
-    });
-
-    const result = await generateWithRetry(model, {
+    const result = await generateWithFallback(genAI, systemPrompt, {
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-      generationConfig: {
-        maxOutputTokens: maxTokens,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
+      generationConfig: { maxOutputTokens: maxTokens },
     });
 
     // Gemini 2.5 Flash may include thinking parts — extract only output parts

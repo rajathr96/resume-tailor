@@ -1162,7 +1162,11 @@ OUTPUT (return ONLY this JSON, no markdown):
                         />
                       ) : (
                         <div className="flex items-start gap-2">
-                          <p className="flex-1 text-sm text-stone-700 leading-relaxed">{masterResult.summary}</p>
+                          <p
+                            className="flex-1 text-sm text-stone-700 leading-relaxed cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
+                            onClick={() => setEditingKey('summary')}
+                            title="Click to edit"
+                          >{masterResult.summary}</p>
                           <button onClick={() => setEditingKey('summary')} className="flex-shrink-0 p-1 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit summary">
                             <Pencil className="w-3 h-3" />
                           </button>
@@ -1204,7 +1208,11 @@ OUTPUT (return ONLY this JSON, no markdown):
                                     className="flex-1 text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
                                   />
                                 ) : (
-                                  <span className="flex-1">{b}</span>
+                                  <span
+                                    className="flex-1 cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
+                                    onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
+                                    title="Click to edit"
+                                  >{b}</span>
                                 )}
                                 {!isEditing && (
                                   <div className="flex items-center gap-1 flex-shrink-0">
@@ -1416,7 +1424,11 @@ OUTPUT (return ONLY this JSON, no markdown):
                                         className="flex-1 text-xs border border-stone-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
                                       />
                                     ) : (
-                                      <span className="flex-1">{b}</span>
+                                      <span
+                                        className="flex-1 cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
+                                        onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
+                                        title="Click to edit"
+                                      >{b}</span>
                                     )}
                                     {!isEditing && (
                                       <div className="flex items-center gap-0.5 flex-shrink-0">
@@ -1501,7 +1513,11 @@ OUTPUT (return ONLY this JSON, no markdown):
                             />
                           ) : (
                             <div className="flex items-start gap-1.5">
-                              <p className="flex-1 text-xs text-stone-700 leading-relaxed">{masterResult.summary}</p>
+                              <p
+                                className="flex-1 text-xs text-stone-700 leading-relaxed cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
+                                onClick={() => setEditingKey('summary')}
+                                title="Click to edit"
+                              >{masterResult.summary}</p>
                               <button onClick={() => setEditingKey('summary')} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit">
                                 <Pencil className="w-2.5 h-2.5" />
                               </button>
@@ -1971,7 +1987,11 @@ OUTPUT (return ONLY this JSON, no markdown):
                         />
                       ) : (
                         <div className="flex items-start gap-1.5">
-                          <p className="flex-1 text-xs text-stone-700 leading-relaxed">{tailoredDisplay.summary || <span className="text-stone-400 italic">No summary</span>}</p>
+                          <p
+                            className="flex-1 text-xs text-stone-700 leading-relaxed cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
+                            onClick={() => setEditingKey('t-summary')}
+                            title="Click to edit"
+                          >{tailoredDisplay.summary || <span className="text-stone-400 italic">No summary</span>}</p>
                           <button onClick={() => setEditingKey('t-summary')} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit">
                             <Pencil className="w-2.5 h-2.5" />
                           </button>
@@ -2012,7 +2032,11 @@ OUTPUT (return ONLY this JSON, no markdown):
                                         className="flex-1 text-sm border border-stone-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
                                       />
                                     ) : (
-                                      <span className="flex-1">{b}</span>
+                                      <span
+                                        className="flex-1 cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
+                                        onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
+                                        title="Click to edit"
+                                      >{b}</span>
                                     )}
                                     {!isEditing && (
                                       <div className="flex items-center gap-1 flex-shrink-0">
@@ -2180,7 +2204,11 @@ OUTPUT (return ONLY this JSON, no markdown):
                                           className="flex-1 text-xs border border-stone-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-stone-400 resize-none"
                                         />
                                       ) : (
-                                        <span className="flex-1">{b}</span>
+                                        <span
+                                          className="flex-1 cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
+                                          onClick={() => { setEditingKey(key); setEditingText(b); setRefineKey(null); }}
+                                          title="Click to edit"
+                                        >{b}</span>
                                       )}
                                       {!isEditing && (
                                         <div className="flex items-center gap-0.5 flex-shrink-0">
@@ -2258,7 +2286,11 @@ OUTPUT (return ONLY this JSON, no markdown):
                             />
                           ) : (
                             <div className="flex items-start gap-1.5">
-                              <p className="flex-1 text-xs text-stone-700 leading-relaxed">{tailoredDisplay.summary || <span className="text-stone-400 italic">No summary</span>}</p>
+                              <p
+                                className="flex-1 text-xs text-stone-700 leading-relaxed cursor-text rounded px-0.5 -mx-0.5 hover:bg-stone-100 transition-colors"
+                                onClick={() => setEditingKey('t-summary')}
+                                title="Click to edit"
+                              >{tailoredDisplay.summary || <span className="text-stone-400 italic">No summary</span>}</p>
                               <button onClick={() => setEditingKey('t-summary')} className="flex-shrink-0 p-0.5 rounded hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors" title="Edit">
                                 <Pencil className="w-2.5 h-2.5" />
                               </button>
